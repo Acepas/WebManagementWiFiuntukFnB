@@ -50,11 +50,26 @@ interface RouterResources {
   architectureName: string;
 }
 
+interface InterfaceTraffic {
+  id: string;
+  name: string;
+  type: string;
+  mtu: number;
+  macAddress: string;
+  rxByte: number;
+  txByte: number;
+  rxPacket: number;
+  txPacket: number;
+  running: boolean;
+  disabled: boolean;
+}
+
 export default function DashboardPage() {
   const { activeServerId, servers, setActiveServerId, checkActiveServerStatus, isSyncing } = useServerStore();
   
   const [activeUsers, setActiveUsers] = useState<ActiveUser[]>([]);
   const [resources, setResources] = useState<RouterResources | null>(null);
+  const [traffic, setTraffic] = useState<InterfaceTraffic[]>([]);
   const [vouchersCount, setVouchersCount] = useState<number>(0);
   
   const [isLoading, setIsLoading] = useState(false);
@@ -110,6 +125,10 @@ export default function DashboardPage() {
       const resourcesRes = await apiClient.get<RouterResources>(`/monitoring/resources/${activeServerId}`);
       setResources(resourcesRes.data);
 
+      // Fetch Traffic
+      const trafficRes = await apiClient.get<InterfaceTraffic[]>(`/monitoring/traffic/${activeServerId}`);
+      setTraffic(trafficRes.data);
+
       // 3. Fetch Vouchers (to count vouchers for this server)
       const vouchersRes = await apiClient.get<any[]>("/vouchers");
       const filteredVouchers = vouchersRes.data.filter((v: any) => v.serverId === activeServerId);
@@ -124,6 +143,7 @@ export default function DashboardPage() {
       // Reset data
       setActiveUsers([]);
       setResources(null);
+      setTraffic([]);
     } finally {
       setIsLoading(false);
       setIsSilentLoading(false);
@@ -330,6 +350,8 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          {/* Top Monitoring Grid moved to bottom */}
+
           {/* Overview Metric Row */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Metric 1: User Aktif */}
@@ -399,8 +421,8 @@ export default function DashboardPage() {
           {/* System Performance & Hardware Resources Row */}
           {!error && resources && (
             <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/60 shadow-sm space-y-6">
-              <h2 className="text-lg font-bold text-on-surface flex items-center gap-2">
-                <Activity className="w-5 h-5 text-primary" /> Performa Router & Hardware
+              <h2 className="text-lg font-bold text-on-surface">
+                Performa Router & Hardware
               </h2>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -521,115 +543,160 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Active Users Table Section */}
-          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-sm overflow-hidden">
-            {/* Table Header Controls */}
-            <div className="p-6 border-b border-outline-variant/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-on-surface flex items-center gap-2">
-                  <Network className="w-5 h-5 text-primary" /> Pengguna Hotspot Aktif
-                </h2>
-                <p className="text-xs text-on-surface-variant mt-1">Daftar pelanggan yang terhubung dan bertransaksi data di WiFi hotspot saat ini</p>
+          {/* Top Monitoring Grid (Moved to bottom) */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
+            {/* Traffic Monitor Section */}
+            <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-sm overflow-hidden flex flex-col h-[400px]">
+              <div className="p-6 border-b border-outline-variant/60 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
+                <div>
+                  <h2 className="text-lg font-bold text-on-surface">
+                    Traffic Jaringan
+                  </h2>
+                  <p className="text-xs text-on-surface-variant mt-1">Pantau bandwidth RX/TX secara real-time</p>
+                </div>
               </div>
 
-              {/* Search Bar */}
-              {!error && activeUsers.length > 0 && (
-                <div className="relative max-w-sm w-full">
-                  <Search className="w-4 h-4 text-on-surface-variant absolute left-3 top-3 pointer-events-none" />
-                  <input
-                    type="text"
-                    placeholder="Cari berdasarkan username, IP, atau MAC..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full text-sm bg-surface-variant/45 text-on-surface placeholder-on-surface-variant rounded-xl pl-9 pr-4 py-2 border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface-container-lowest transition-all"
-                  />
-                </div>
-              )}
+              <div className="flex-1 overflow-auto bg-surface-container-lowest">
+                {error ? (
+                  <div className="p-12 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
+                    <AlertTriangle className="w-12 h-12 text-error mb-3" />
+                    <p className="font-semibold">Data traffic tidak tersedia</p>
+                  </div>
+                ) : traffic.length === 0 ? (
+                  <div className="p-16 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
+                    <Activity className="w-14 h-14 text-outline-variant mb-4 animate-pulse" />
+                    <h3 className="font-bold text-on-surface text-base">Sedang Memuat...</h3>
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 bg-surface-variant/90 backdrop-blur text-on-surface-variant font-semibold text-xs border-b border-outline-variant/60 select-none z-10">
+                      <tr>
+                        <th className="p-3 pl-6">Interface</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3 flex items-center gap-1.5"><ArrowDown className="w-3.5 h-3.5 text-emerald-600" /> RX</th>
+                        <th className="p-3"><span className="flex items-center gap-1.5"><ArrowUp className="w-3.5 h-3.5 text-primary" /> TX</span></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/30 text-sm text-on-surface">
+                      {traffic.map((iface) => (
+                        <tr key={iface.id} className="hover:bg-primary-container/10 transition-colors group">
+                          <td className="p-3 pl-6 font-bold text-on-surface flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${iface.running ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-outline-variant'}`}></span>
+                            <span className="truncate max-w-[100px] sm:max-w-none">{iface.name}</span>
+                          </td>
+                          <td className="p-3">
+                            {iface.disabled ? (
+                              <span className="px-2 py-0.5 bg-error-container text-on-error-container text-[10px] font-bold rounded uppercase">Disabled</span>
+                            ) : iface.running ? (
+                              <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold rounded uppercase">Running</span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-surface-variant text-on-surface-variant text-[10px] font-bold rounded uppercase">Down</span>
+                            )}
+                          </td>
+                          <td className="p-3 font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                            {formatBytes(iface.rxByte)}
+                          </td>
+                          <td className="p-3 font-mono text-xs font-semibold text-primary whitespace-nowrap">
+                            {formatBytes(iface.txByte)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
 
-            {/* Table / Empty State */}
-            {error ? (
-              <div className="p-12 text-center text-on-surface-variant bg-surface-container-lowest">
-                <AlertTriangle className="w-12 h-12 text-error mx-auto mb-3" />
-                <p className="font-semibold">Data pengguna aktif tidak tersedia</p>
-                <p className="text-xs text-on-surface-variant mt-1">Nyalakan koneksi router MikroTik untuk mengambil data user aktif secara langsung.</p>
+            {/* Active Users Table Section */}
+            <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-sm overflow-hidden flex flex-col h-[400px]">
+              <div className="p-6 border-b border-outline-variant/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
+                <div>
+                  <h2 className="text-lg font-bold text-on-surface">
+                    Pengguna Aktif
+                  </h2>
+                  <p className="text-xs text-on-surface-variant mt-1">Daftar pelanggan terhubung saat ini</p>
+                </div>
+                {!error && activeUsers.length > 0 && (
+                  <div className="relative max-w-[180px] w-full shrink-0">
+                    <Search className="w-4 h-4 text-on-surface-variant absolute left-3 top-2 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Cari user..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full text-xs bg-surface-variant/45 text-on-surface placeholder-on-surface-variant rounded-xl pl-9 pr-3 py-1.5 border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface-container-lowest transition-all"
+                    />
+                  </div>
+                )}
               </div>
-            ) : activeUsers.length === 0 ? (
-              <div className="p-16 text-center text-on-surface-variant bg-surface-container-lowest">
-                <Users className="w-14 h-14 text-outline-variant mx-auto mb-4 animate-bounce" />
-                <h3 className="font-bold text-on-surface text-base">Belum Ada Sesi Pengguna Aktif</h3>
-                <p className="text-xs text-on-surface-variant max-w-sm mx-auto mt-1">
-                  Saat ini tidak ada pelanggan kafe yang sedang menggunakan voucher WiFi terdaftar di router hotspot ini.
-                </p>
-              </div>
-            ) : filteredUsers.length === 0 ? (
-              <div className="p-16 text-center text-on-surface-variant bg-surface-container-lowest">
-                <Search className="w-12 h-12 text-outline-variant mx-auto mb-3" />
-                <h3 className="font-bold text-on-surface text-base">Tidak ada pencarian cocok</h3>
-                <p className="text-xs text-on-surface-variant mt-1">
-                  Tidak menemukan pengguna aktif dengan kata pencarian &quot;{searchQuery}&quot;.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-surface-variant/40 text-on-surface-variant font-semibold text-xs border-b border-outline-variant/60 select-none">
-                      <th className="p-4 pl-6">Username / Voucher</th>
-                      <th className="p-4">IP Address</th>
-                      <th className="p-4">MAC Address</th>
-                      <th className="p-4">Waktu Uptime</th>
-                      <th className="p-4 flex items-center gap-1.5"><ArrowUp className="w-3.5 h-3.5 text-primary" /> Upload</th>
-                      <th className="p-4"><span className="flex items-center gap-1.5"><ArrowDown className="w-3.5 h-3.5 text-emerald-600" /> Download</span></th>
-                      <th className="p-4 pr-6">Sisa Waktu Sesi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-outline-variant/30 text-sm text-on-surface">
-                    {filteredUsers.map((user) => (
-                      <tr 
-                        key={user.id} 
-                        className="hover:bg-primary-container/10 transition-colors group"
-                      >
-                        <td className="p-4 pl-6 font-bold text-primary flex items-center gap-2 group-hover:text-primary-container-low">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-                          <span>{user.username}</span>
-                        </td>
-                        <td className="p-4 font-mono text-xs">{user.ipAddress}</td>
-                        <td className="p-4 font-mono text-xs text-on-surface-variant">{user.macAddress}</td>
-                        <td className="p-4 text-xs font-medium text-on-surface flex items-center gap-1.5 mt-1.5">
-                          <Clock className="w-3.5 h-3.5 text-on-surface-variant" />
-                          <span>{user.uptime}</span>
-                        </td>
-                        <td className="p-4 font-mono text-xs text-on-surface-variant">
-                          {formatBytes(user.bytesIn)}
-                        </td>
-                        <td className="p-4 font-mono text-xs font-semibold text-on-surface">
-                          {formatBytes(user.bytesOut)}
-                        </td>
-                        <td className="p-4 pr-6">
-                          {user.sessionTimeLeft ? (
-                            <span className="px-2.5 py-1 bg-amber-500/15 text-amber-700 dark:text-amber-400 font-bold text-xs rounded-lg border border-amber-500/30">
-                              {user.sessionTimeLeft}
-                            </span>
-                          ) : (
-                            <span className="text-on-surface-variant text-xs font-semibold italic">Unlimited</span>
-                          )}
-                        </td>
+
+              <div className="flex-1 overflow-auto bg-surface-container-lowest">
+                {error ? (
+                  <div className="p-12 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
+                    <AlertTriangle className="w-12 h-12 text-error mb-3" />
+                    <p className="font-semibold">Data pengguna tidak tersedia</p>
+                  </div>
+                ) : activeUsers.length === 0 ? (
+                  <div className="p-16 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
+                    <Users className="w-14 h-14 text-outline-variant mb-4 animate-bounce" />
+                    <h3 className="font-bold text-on-surface text-base">Belum Ada Sesi Pengguna</h3>
+                  </div>
+                ) : filteredUsers.length === 0 ? (
+                  <div className="p-16 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
+                    <Search className="w-12 h-12 text-outline-variant mb-3" />
+                    <h3 className="font-bold text-on-surface text-base">Tidak ada pencarian cocok</h3>
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 bg-surface-variant/90 backdrop-blur text-on-surface-variant font-semibold text-xs border-b border-outline-variant/60 select-none z-10">
+                      <tr>
+                        <th className="p-3 pl-6">Username</th>
+                        <th className="p-3">IP Address</th>
+                        <th className="p-3">Uptime</th>
+                        <th className="p-3 pr-6">Sisa Waktu</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="p-4 border-t border-outline-variant/40 bg-surface-variant/15 flex items-center justify-between text-xs text-on-surface-variant select-none">
-                  <span>Menampilkan {filteredUsers.length} pengguna aktif</span>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/30 text-sm text-on-surface">
+                      {filteredUsers.map((user) => (
+                        <tr key={user.id} className="hover:bg-primary-container/10 transition-colors group">
+                          <td className="p-3 pl-6 font-bold text-primary flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+                            <span className="truncate max-w-[100px] sm:max-w-none">{user.username}</span>
+                          </td>
+                          <td className="p-3 font-mono text-xs whitespace-nowrap">{user.ipAddress}</td>
+                          <td className="p-3 text-xs font-medium text-on-surface whitespace-nowrap">
+                            {user.uptime}
+                          </td>
+                          <td className="p-3 pr-6 whitespace-nowrap">
+                            {user.sessionTimeLeft ? (
+                              <span className="px-2 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 font-bold text-[10px] rounded border border-amber-500/30">
+                                {user.sessionTimeLeft}
+                              </span>
+                            ) : (
+                              <span className="text-on-surface-variant text-[10px] font-semibold italic">Unlimited</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              
+              {/* Table Footer */}
+              {!error && activeUsers.length > 0 && (
+                <div className="p-3 border-t border-outline-variant/40 bg-surface-variant/20 flex items-center justify-between text-xs text-on-surface-variant select-none shrink-0">
+                  <span className="font-medium text-[11px]">Menampilkan {filteredUsers.length} pengguna</span>
                   {isSilentLoading && (
-                    <span className="text-primary font-semibold flex items-center gap-1.5 animate-pulse">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Memperbarui data...
+                    <span className="text-primary font-semibold flex items-center gap-1.5 animate-pulse text-[11px]">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Memperbarui...
                     </span>
                   )}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
+
         </>
       )}
     </div>

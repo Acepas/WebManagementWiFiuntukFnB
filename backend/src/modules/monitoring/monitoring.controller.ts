@@ -48,4 +48,21 @@ export class MonitoringController {
   async getRouterResources(@Param('serverId') serverId: string) {
     return this.monitoringService.getRouterResources(serverId);
   }
+
+  @Get('traffic/:serverId')
+  @ApiOperation({
+    summary:
+      'Mendapatkan data statistik traffic (RX/TX bytes) dari seluruh interface router',
+    description:
+      'Mengambil data jumlah data masuk dan keluar pada masing-masing interface / outlet secara real-time dari CHR.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Data statistik traffic berhasil diambil secara real-time.',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Router tidak ditemukan.' })
+  async getRouterTraffic(@Param('serverId') serverId: string) {
+    return this.monitoringService.getRouterTraffic(serverId);
+  }
 }

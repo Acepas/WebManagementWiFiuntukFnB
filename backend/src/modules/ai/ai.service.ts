@@ -1,12 +1,14 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { MikrotikService } from '../mikrotik/mikrotik.service.js';
+import { ActivityLogService } from '../activity-log/activity-log.service.js';
 
 @Injectable()
 export class AiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mikrotikService: MikrotikService,
+    private readonly activityLogService: ActivityLogService,
   ) {}
 
   /**
@@ -28,6 +30,10 @@ ${configJson}`;
    */
   private async callGemini(prompt: string): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY || '';
+    if (!apiKey) {
+      throw new BadRequestException("API Key untuk Google Gemini belum dikonfigurasi di server (.env).");
+    }
+
     const model = 'gemini-flash-latest';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     const response = await fetch(url, {
@@ -52,6 +58,10 @@ ${configJson}`;
    */
   private async callOpenRouter(prompt: string): Promise<string> {
     const apiKey = process.env.OPENROUTER_API_KEY || '';
+    if (!apiKey) {
+      throw new BadRequestException("API Key untuk OpenRouter belum dikonfigurasi di server (.env).");
+    }
+
     const url = 'https://openrouter.ai/api/v1/chat/completions';
     const response = await fetch(url, {
       method: 'POST',
@@ -187,6 +197,15 @@ ${configJson}`;
         resultMd,
         status: 'COMPLETED',
       },
+    });
+
+    // 4. Catat Log
+    await this.activityLogService.logAction({
+      action: 'AI_ANALYSIS_COMPLETED',
+      serverId,
+      entity: 'AiReport',
+      entityId: report.id,
+      detail: `Analisis AI selesai menggunakan provider: ${actualProvider}`,
     });
 
     return report;

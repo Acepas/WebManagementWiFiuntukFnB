@@ -98,4 +98,41 @@ export class MonitoringService {
       );
     }
   }
+
+  /**
+   * Mengambil statistik traffic dari semua interface router MikroTik secara real-time.
+   */
+  async getRouterTraffic(serverId: string) {
+    // 1. Cek keberadaan server
+    const server = await this.prisma.mikrotikServer.findUnique({
+      where: { id: serverId },
+    });
+    if (!server) {
+      throw new NotFoundException(
+        `Server MikroTik dengan ID "${serverId}" tidak ditemukan`,
+      );
+    }
+
+    try {
+      const interfacesRaw = await this.mikrotikService.getInterfaces(serverId);
+
+      return interfacesRaw.map((iface: any) => ({
+        id: iface['.id'] || iface.id,
+        name: iface.name || 'Unknown',
+        type: iface.type || 'Unknown',
+        mtu: iface.mtu ? parseInt(iface.mtu, 10) : 0,
+        macAddress: iface['mac-address'] || '-',
+        rxByte: iface['rx-byte'] ? parseInt(iface['rx-byte'], 10) : 0,
+        txByte: iface['tx-byte'] ? parseInt(iface['tx-byte'], 10) : 0,
+        rxPacket: iface['rx-packet'] ? parseInt(iface['rx-packet'], 10) : 0,
+        txPacket: iface['tx-packet'] ? parseInt(iface['tx-packet'], 10) : 0,
+        running: iface.running === 'true' || iface.running === true,
+        disabled: iface.disabled === 'true' || iface.disabled === true,
+      }));
+    } catch (error: any) {
+      throw new Error(
+        `Gagal memantau traffic dari MikroTik: ${error.message}`,
+      );
+    }
+  }
 }

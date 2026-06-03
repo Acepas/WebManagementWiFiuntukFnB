@@ -16,7 +16,8 @@ import {
   LogOut,
   Menu,
   ChevronDown,
-  Wifi
+  Wifi,
+  History
 } from "lucide-react";
 
 export default function DashboardLayout({
@@ -84,6 +85,7 @@ export default function DashboardLayout({
     { name: "Vouchers", href: "/vouchers", icon: Ticket },
     { name: "POS Transactions", href: "/pos", icon: ShoppingCart },
     { name: "AI Analysis", href: "/ai", icon: BrainCircuit },
+    { name: "Activity Logs", href: "/logs", icon: History },
   ];
 
   return (

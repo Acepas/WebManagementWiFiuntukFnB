@@ -27,7 +27,8 @@ import {
   Shuffle,
   ChevronRight,
   ChevronLeft,
-  Layers
+  Layers,
+  Trash2
 } from "lucide-react";
 
 interface VoucherProfile {
@@ -95,7 +96,13 @@ export default function VouchersPage() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [profileFilter, setProfileFilter] = useState("ALL");
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 15;
+  const [itemsPerPage, setItemsPerPage] = useState(15);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  
+  // Delete States
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Form States (Single Voucher)
   const [singleForm, setSingleForm] = useState({
@@ -142,7 +149,8 @@ export default function VouchersPage() {
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, statusFilter, profileFilter]);
+    setSelectedIds([]);
+  }, [searchQuery, statusFilter, profileFilter, itemsPerPage]);
 
   const loadVouchers = async () => {
     setIsLoading(true);
@@ -167,6 +175,28 @@ export default function VouchersPage() {
     await syncActiveServer(activeServerId);
     await loadVouchers();
     await loadProfiles();
+  };
+
+  const executeDelete = async () => {
+    setIsDeleting(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const response = await apiClient.post("/vouchers/delete-bulk", { ids: deleteTarget });
+      if (response.data?.success) {
+        // We use alert or notification. Since we don't have global toast here easily without adding one, 
+        // we can just rely on the loadVouchers() to update state and close modal.
+        setSelectedIds([]);
+        await loadVouchers();
+        setIsDeleteModalOpen(false);
+      } else {
+        alert(response.data?.message || "Gagal menghapus voucher");
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || error.message || "Gagal menghapus voucher");
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const loadProfiles = async () => {
@@ -397,7 +427,7 @@ export default function VouchersPage() {
   const paginatedVouchers = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
     return filteredVouchers.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredVouchers, currentPage]);
+  }, [filteredVouchers, currentPage, itemsPerPage]);
 
   const getPageNumbers = () => {
     const pages: (number | string)[] = [];
@@ -436,6 +466,29 @@ export default function VouchersPage() {
     return pages;
   };
 
+  const toggleSelectAll = () => {
+    const unUsedInPage = paginatedVouchers.filter((v) => v.status === "UNUSED").map((v) => v.id);
+    if (unUsedInPage.length === 0) return;
+    
+    const allSelected = unUsedInPage.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !unUsedInPage.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...unUsedInPage])));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const confirmDelete = (ids: string[]) => {
+    setDeleteTarget(ids);
+    setIsDeleteModalOpen(true);
+  };
+
   // Get PDF download URL from NestJS backend API
   const getPdfBatchUrl = (batchId: string) => {
     return `http://localhost:4000/api/vouchers/pdf/batch/${batchId}`;
@@ -456,9 +509,6 @@ export default function VouchersPage() {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-2xl font-bold text-on-surface">Voucher Hotspot</h1>
-            <span className="px-2.5 py-0.5 bg-primary/10 text-primary border border-primary/20 text-xs font-semibold rounded-full">
-              {stats.total} Total Voucher
-            </span>
           </div>
           <p className="text-on-surface-variant mt-1 text-sm">
             {activeServer
@@ -606,13 +656,22 @@ export default function VouchersPage() {
                 <Activity className="w-4 h-4 text-on-surface-variant absolute left-3 top-2.5 pointer-events-none" />
               </div>
 
-              {/* Cetak Semua Button */}
-              <div className="col-span-1 lg:col-span-2">
+              {/* Delete and Cetak Semua Buttons */}
+              <div className="col-span-1 lg:col-span-2 flex items-center gap-2">
+                {selectedIds.length > 0 && (
+                  <button
+                    onClick={() => confirmDelete(selectedIds)}
+                    className="flex items-center justify-center gap-2 h-full min-h-[38px] px-4 py-2 bg-error/10 text-error hover:bg-error hover:text-white transition-all font-semibold rounded-xl shadow-sm text-xs cursor-pointer flex-1 border border-error/20"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Hapus ({selectedIds.length})
+                  </button>
+                )}
                 <a
                   href={getPdfFilteredUrl()}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center justify-center gap-2 w-full h-full min-h-[38px] px-4 py-2 bg-emerald-600 hover:bg-emerald-600/90 active:scale-[0.98] text-white hover:text-white transition-all font-semibold rounded-xl shadow-sm text-xs cursor-pointer"
+                  className="flex items-center justify-center gap-2 h-full min-h-[38px] px-4 py-2 bg-emerald-600 hover:bg-emerald-600/90 active:scale-[0.98] text-white hover:text-white transition-all font-semibold rounded-xl shadow-sm text-xs cursor-pointer flex-1"
                 >
                   <Printer className="w-4 h-4" />
                   Cetak Semua ({profileFilter === "ALL" ? "Semua Paket" : profiles.find(p => p.id === profileFilter)?.name || "Paket"})
@@ -627,13 +686,25 @@ export default function VouchersPage() {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-surface-container-low border-b border-outline-variant text-on-surface-variant font-semibold">
+                    <th className="p-4 w-12 text-center">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary cursor-pointer disabled:opacity-50"
+                        onChange={toggleSelectAll}
+                        disabled={paginatedVouchers.filter(v => v.status === "UNUSED").length === 0}
+                        checked={
+                          paginatedVouchers.filter(v => v.status === "UNUSED").length > 0 &&
+                          paginatedVouchers.filter(v => v.status === "UNUSED").every(v => selectedIds.includes(v.id))
+                        }
+                      />
+                    </th>
                     <th className="p-4">Kode Voucher</th>
                     <th className="p-4">Password</th>
                     <th className="p-4">Paket / Profile</th>
                     <th className="p-4">Outlet / Server</th>
                     <th className="p-4">Status</th>
                     <th className="p-4">Tanggal Dibuat</th>
-                    <th className="p-4 text-center">Cetak</th>
+                    <th className="p-4 text-center">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/40">
@@ -659,7 +730,17 @@ export default function VouchersPage() {
                       const validity = voucher.profile?.validity || "No Limit";
 
                       return (
-                        <tr key={voucher.id} className="hover:bg-surface-variant/35 transition-colors">
+                        <tr key={voucher.id} className={`hover:bg-surface-variant/35 transition-colors ${selectedIds.includes(voucher.id) ? 'bg-primary/5' : ''}`}>
+                          <td className="p-4 text-center">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              checked={selectedIds.includes(voucher.id)}
+                              onChange={() => toggleSelect(voucher.id)}
+                              disabled={voucher.status !== "UNUSED"}
+                              title={voucher.status !== "UNUSED" ? "Hanya voucher UNUSED yang dapat dihapus" : "Pilih voucher"}
+                            />
+                          </td>
                           <td className="p-4 font-mono font-bold text-on-surface text-sm">
                             {voucher.username}
                           </td>
@@ -729,16 +810,27 @@ export default function VouchersPage() {
                               timeStyle: "short"
                             })}
                           </td>
-                          <td className="p-4 text-center">
-                            <a
-                              href={getPdfSingleUrl(voucher.id)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center justify-center p-1.5 border border-outline-variant hover:bg-primary-container hover:text-primary rounded-lg text-on-surface-variant transition-colors"
-                              title="Cetak Kartu Voucher PDF Satuan"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                            </a>
+                          <td className="p-4">
+                            <div className="flex items-center justify-center gap-2">
+                              <a
+                                href={getPdfSingleUrl(voucher.id)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center p-1.5 border border-outline-variant hover:bg-primary-container hover:text-primary rounded-lg text-on-surface-variant transition-colors"
+                                title="Cetak Kartu Voucher PDF Satuan"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </a>
+                              {voucher.status === "UNUSED" && (
+                                <button
+                                  onClick={() => confirmDelete([voucher.id])}
+                                  className="inline-flex items-center justify-center p-1.5 border border-error/30 hover:bg-error hover:text-white rounded-lg text-error transition-colors"
+                                  title="Hapus Voucher"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -750,7 +842,21 @@ export default function VouchersPage() {
 
             {/* Pagination / Table bottom controls */}
             <div className="bg-surface-container-low border-t border-outline-variant/60 p-3.5 flex flex-col sm:flex-row items-center justify-between gap-4 text-on-surface-variant text-xs">
-              <div className="text-[11px] font-medium">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Baris per halaman:</span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                    className="bg-surface-variant border border-outline-variant rounded-lg px-2 py-1 text-xs text-on-surface focus:outline-none cursor-pointer"
+                  >
+                    <option value={10}>10</option>
+                    <option value={15}>15</option>
+                    <option value={50}>50</option>
+                    <option value={999999}>Semua</option>
+                  </select>
+                </div>
+                <div className="text-[11px] font-medium hidden sm:block border-l border-outline-variant/60 pl-3">
                 {filteredVouchers.length === 0 ? (
                   <span>Menampilkan 0 voucher terbitan.</span>
                 ) : (
@@ -758,6 +864,7 @@ export default function VouchersPage() {
                     Menampilkan <span className="font-bold text-on-surface">{(currentPage - 1) * itemsPerPage + 1}</span> – <span className="font-bold text-on-surface">{Math.min(currentPage * itemsPerPage, filteredVouchers.length)}</span> dari <span className="font-bold text-on-surface">{filteredVouchers.length}</span> voucher terbitan.
                   </span>
                 )}
+              </div>
               </div>
 
               {totalPages > 1 && (
@@ -1314,6 +1421,46 @@ export default function VouchersPage() {
                   {batchProcessingInfo.done ? "Tutup" : "Menunggu konfirmasi..."}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============ DELETE CONFIRMATION MODAL ============ */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-surface-container-lowest border border-outline-variant rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-slide-up p-6">
+            <div className="w-12 h-12 rounded-full bg-error/10 text-error flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <h3 className="text-center font-bold text-on-surface text-lg mb-2">
+              Konfirmasi Penghapusan
+            </h3>
+            <p className="text-center text-sm text-on-surface-variant mb-6">
+              Anda yakin ingin menghapus <strong>{deleteTarget.length}</strong> voucher? 
+              <br/><br/>
+              Tindakan ini juga akan <strong>menghapus user dari router MikroTik</strong> dan tidak dapat dibatalkan.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setIsDeleteModalOpen(false)}
+                disabled={isDeleting}
+                className="flex-1 py-2.5 border border-outline-variant text-on-surface-variant hover:bg-surface-variant rounded-xl font-semibold text-sm transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={executeDelete}
+                disabled={isDeleting}
+                className="flex-1 py-2.5 bg-error text-white hover:bg-error/90 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                {isDeleting ? "Menghapus..." : "Hapus Voucher"}
+              </button>
             </div>
           </div>
         </div>

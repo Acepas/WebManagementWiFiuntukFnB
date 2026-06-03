@@ -471,13 +471,7 @@ export default function ServersPage() {
                     </span>
                   </div>
 
-                  {/* Quick ping info */}
-                  {isOnline && (
-                    <div className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/5 px-2 py-0.5 rounded-full border border-emerald-500/10">
-                      <Activity className="w-3 h-3" />
-                      Ping Ready
-                    </div>
-                  )}
+
                 </div>
               </div>
             );
@@ -492,9 +486,6 @@ export default function ServersPage() {
             {/* Modal Header */}
             <div className="flex items-center justify-between p-5 border-b border-outline-variant bg-surface-container-low">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
-                  <Plus className="w-5 h-5" />
-                </div>
                 <div>
                   <h3 className="font-bold text-on-surface">Daftarkan Router MikroTik</h3>
                   <p className="text-[11px] text-on-surface-variant">Hubungkan sistem dengan REST API MikroTik</p>

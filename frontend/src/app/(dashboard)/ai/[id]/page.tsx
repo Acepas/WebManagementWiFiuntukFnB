@@ -10,7 +10,8 @@ import {
   AlertCircle,
   Copy,
   CheckCircle,
-  ArrowLeft
+  ArrowLeft,
+  Download
 } from "lucide-react";
 
 interface AiReport {
@@ -61,6 +62,99 @@ export default function AiReportDetailPage() {
       await navigator.clipboard.writeText(report.resultMd);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!report) return;
+    
+    try {
+      // @ts-ignore
+      const html2pdf = (await import("html2pdf.js")).default;
+      
+      // Ambil elemen konten markdown
+      const markdownElement = document.querySelector(".prose");
+      if (!markdownElement) {
+        alert("Konten laporan tidak ditemukan.");
+        return;
+      }
+
+      // Buat iframe tersembunyi untuk isolasi CSS (menghindari error oklab Tailwind v4)
+      const iframe = document.createElement("iframe");
+      iframe.style.position = "absolute";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "none";
+      document.body.appendChild(iframe);
+
+      const doc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (!doc) throw new Error("Gagal membuat iframe dokumen");
+
+      // Tulis struktur HTML sederhana dengan CSS standar (tanpa oklab/oklch)
+      doc.open();
+      doc.write(`
+        <html>
+          <head>
+            <style>
+              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; font-size: 14px; }
+              h1, h2, h3, h4 { color: #111111; margin-top: 1.5em; margin-bottom: 0.5em; }
+              h1 { font-size: 24px; border-bottom: 2px solid #eaeaea; padding-bottom: 8px; }
+              h2 { font-size: 20px; }
+              p { margin-bottom: 1em; }
+              ul, ol { margin-bottom: 1em; padding-left: 20px; }
+              li { margin-bottom: 0.5em; }
+              code { background-color: #f6f8fa; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #d73a49; }
+              pre { background-color: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; border: 1px solid #e1e4e8; }
+              pre code { background-color: transparent; padding: 0; color: #24292e; }
+              blockquote { border-left: 4px solid #dfe2e5; color: #6a737d; padding-left: 16px; margin-left: 0; }
+              
+              .pdf-header { border-bottom: 2px solid #0052cc; padding-bottom: 16px; margin-bottom: 24px; }
+              .pdf-title { font-size: 28px; font-weight: bold; color: #0052cc; margin: 0 0 8px 0; border: none; }
+              .pdf-meta { font-size: 12px; color: #555555; display: flex; flex-direction: column; gap: 4px; }
+              .pdf-meta strong { color: #333333; }
+              .badge { display: inline-block; background: #e3fcef; color: #006644; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 11px; }
+            </style>
+          </head>
+          <body>
+            <div id="pdf-wrapper">
+              <div class="pdf-header">
+                <h1 class="pdf-title">Laporan Analisis AI</h1>
+                <div class="pdf-meta">
+                  <div><strong>Target Router:</strong> <span class="badge">${report.server?.name || "Unknown Server"} (${report.server?.host || "N/A"})</span></div>
+                  <div><strong>Model AI:</strong> <span style="text-transform: capitalize;">${report.provider}</span></div>
+                  <div><strong>Tanggal:</strong> ${new Date(report.createdAt).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })} WIB</div>
+                </div>
+              </div>
+              <div class="pdf-body">
+                ${markdownElement.innerHTML}
+              </div>
+            </div>
+          </body>
+        </html>
+      `);
+      doc.close();
+
+      // Konfigurasi html2pdf
+      const opt = {
+        margin: [15, 15, 20, 15],
+        filename: `Laporan-AI-${report.server?.name || "Server"}-${new Date(report.createdAt).toISOString().split('T')[0]}.pdf`,
+        image: { type: 'jpeg', quality: 1.0 },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      // Jalankan konversi pada elemen di dalam iframe
+      setTimeout(() => {
+        const targetElement = doc.getElementById('pdf-wrapper');
+        html2pdf().set(opt).from(targetElement).save().then(() => {
+          // Hapus iframe setelah selesai
+          document.body.removeChild(iframe);
+        });
+      }, 500); // Tunggu sebentar agar iframe selesai render
+
+    } catch (error) {
+      console.error("Gagal mengunduh PDF:", error);
+      alert("Terjadi kesalahan internal saat membuat PDF.");
     }
   };
 
@@ -115,32 +209,44 @@ export default function AiReportDetailPage() {
           </div>
         </div>
 
-        {/* Copy Button */}
-        <button
-          onClick={handleCopyResult}
-          disabled={isCopied}
-          className={`flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm ${
-            isCopied
-              ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-              : "bg-surface-container border border-outline-variant hover:bg-surface-variant text-on-surface"
-          }`}
-        >
-          {isCopied ? (
-            <>
-              <CheckCircle className="w-4 h-4" />
-              <span>Berhasil Disalin!</span>
-            </>
-          ) : (
-            <>
-              <Copy className="w-4 h-4" />
-              <span>Salin Laporan</span>
-            </>
-          )}
-        </button>
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDownloadPdf}
+            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm bg-surface-container border border-outline-variant hover:bg-surface-variant text-on-surface"
+            title="Unduh laporan dalam format PDF"
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Unduh PDF</span>
+            <span className="sm:hidden">PDF</span>
+          </button>
+          
+          <button
+            onClick={handleCopyResult}
+            disabled={isCopied}
+            className={`flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm ${
+              isCopied
+                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                : "bg-primary text-on-primary hover:bg-primary/90"
+            }`}
+          >
+            {isCopied ? (
+              <>
+                <CheckCircle className="w-4 h-4" />
+                <span className="hidden sm:inline">Berhasil Disalin!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                <span className="hidden sm:inline">Salin Laporan</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Main Content Card */}
-      <div className="bg-surface-container-lowest border border-outline-variant rounded-2xl shadow-sm overflow-hidden flex flex-col">
+      <div id="pdf-content" className="bg-surface-container-lowest border border-outline-variant rounded-2xl shadow-sm overflow-hidden flex flex-col">
         {/* Card Info Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-5 border-b border-outline-variant bg-surface-container-low gap-3">
           <div className="flex items-center gap-2">

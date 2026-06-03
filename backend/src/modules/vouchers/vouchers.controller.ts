@@ -46,6 +46,18 @@ export class VouchersController {
     return this.vouchersService.generateBatch(dto);
   }
 
+  @Post('delete-bulk')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Hapus voucher secara massal (hanya UNUSED)' })
+  @ApiResponse({ status: 200, description: 'Voucher berhasil dihapus' })
+  async deleteBulk(@Body() dto: { ids: string[] }) {
+    if (!dto.ids || dto.ids.length === 0) {
+      return { success: false, message: 'Tidak ada voucher yang dipilih' };
+    }
+    return this.vouchersService.deleteBulk(dto.ids);
+  }
+
   @Get()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('access-token')

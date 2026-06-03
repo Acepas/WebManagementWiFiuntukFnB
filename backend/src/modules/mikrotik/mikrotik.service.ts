@@ -11,7 +11,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 
 @Injectable()
 export class MikrotikService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   /**
    * Helper untuk membuat HTTP request ke RouterOS REST API.
@@ -298,6 +298,23 @@ export class MikrotikService {
       'system/resource',
       'GET',
     );
+  }
+
+  /**
+   * Ambil daftar interface beserta statistik traffic (RX/TX) dari router.
+   */
+  async getInterfaces(serverId: string) {
+    const creds = await this.getServerCredentials(serverId);
+    const response = await this.request(
+      creds.host,
+      creds.port,
+      creds.username,
+      creds.password,
+      creds.useSSL,
+      'interface',
+      'GET',
+    );
+    return Array.isArray(response) ? response : [];
   }
 
   /**

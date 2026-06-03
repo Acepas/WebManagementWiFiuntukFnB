@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { MikrotikService } from '../mikrotik/mikrotik.service.js';
+import { ActivityLogService } from '../activity-log/activity-log.service.js';
 import { CreateServerDto } from './dto/create-server.dto.js';
 import { UpdateServerDto } from './dto/update-server.dto.js';
 import { TestConnectionDto } from './dto/test-connection.dto.js';
@@ -16,6 +17,7 @@ export class ServersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mikrotikService: MikrotikService,
+    private readonly activityLogService: ActivityLogService,
   ) {}
 
   async create(createServerDto: CreateServerDto) {
@@ -33,7 +35,7 @@ export class ServersService {
 
     const defaultPort = port || (useSSL ? 443 : 80);
 
-    return this.prisma.mikrotikServer.create({
+    const server = await this.prisma.mikrotikServer.create({
       data: {
         name,
         host,
@@ -43,6 +45,16 @@ export class ServersService {
         useSSL: useSSL ?? false,
       },
     });
+
+    await this.activityLogService.logAction({
+      action: 'SERVER_CREATED',
+      serverId: server.id,
+      entity: 'MikrotikServer',
+      entityId: server.id,
+      detail: `Router baru ditambahkan: ${name} (${host})`,
+    });
+
+    return server;
   }
 
   async findAll() {
@@ -78,10 +90,20 @@ export class ServersService {
       }
     }
 
-    return this.prisma.mikrotikServer.update({
+    const updated = await this.prisma.mikrotikServer.update({
       where: { id },
       data: updateServerDto,
     });
+
+    await this.activityLogService.logAction({
+      action: 'SERVER_UPDATED',
+      serverId: id,
+      entity: 'MikrotikServer',
+      entityId: id,
+      detail: `Konfigurasi router diupdate: ${updated.name}`,
+    });
+
+    return updated;
   }
 
   async remove(id: string) {
@@ -112,6 +134,16 @@ export class ServersService {
         lastCheckedAt: new Date(),
       },
     });
+
+    if (!result.success) {
+      await this.activityLogService.logAction({
+        action: 'ROUTER_CONNECTION_FAILED',
+        serverId: id,
+        entity: 'MikrotikServer',
+        entityId: id,
+        detail: `Test koneksi gagal: ${result.error}`,
+      });
+    }
 
     return {
       serverId: id,

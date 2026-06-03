@@ -12,9 +12,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { MikrotikService } from '../mikrotik/mikrotik.service.js';
 import { VoucherQueueService } from './voucher-queue.service.js';
+import { ActivityLogService } from '../activity-log/activity-log.service.js';
 import { GenerateSingleDto } from './dto/generate-single.dto.js';
 import { GenerateBatchDto } from './dto/generate-batch.dto.js';
 import PDFDocument from 'pdfkit';
+import * as QRCode from 'qrcode';
 
 function generateRandomCode(length: number): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Menghindari O, I, 1, 0
@@ -31,6 +33,7 @@ export class VouchersService {
     private readonly prisma: PrismaService,
     private readonly mikrotikService: MikrotikService,
     private readonly queueService: VoucherQueueService,
+    private readonly activityLogService: ActivityLogService,
   ) {}
 
   async generateSingle(dto: GenerateSingleDto) {
@@ -89,7 +92,7 @@ export class VouchersService {
     );
 
     // 5. Simpan di database
-    return this.prisma.voucher.create({
+    const voucher = await this.prisma.voucher.create({
       data: {
         serverId,
         profileId,
@@ -100,6 +103,17 @@ export class VouchersService {
       },
       include: { profile: true },
     });
+
+    // 6. Catat Log
+    await this.activityLogService.logAction({
+      action: 'VOUCHER_CREATED',
+      serverId,
+      entity: 'Voucher',
+      entityId: voucher.id,
+      detail: `Dibuat manual: ${finalUsername} (Profile: ${profile.name})`,
+    });
+
+    return voucher;
   }
 
   async generateBatch(dto: GenerateBatchDto) {
@@ -146,6 +160,15 @@ export class VouchersService {
       charFormat,
       outletName,
       batchId,
+    });
+
+    // 5. Catat Log
+    await this.activityLogService.logAction({
+      action: 'VOUCHER_BATCH_CREATED',
+      serverId,
+      entity: 'VoucherBatch',
+      entityId: batchId,
+      detail: `Memulai pembuatan batch ${count} voucher (Profile: ${profile.name})`,
     });
 
     return {
@@ -198,35 +221,10 @@ export class VouchersService {
       const startX = 25;
       const startY = 30;
 
-      // Helper untuk menggambar icon WiFi vector premium di sebelah kanan
-      const drawWifiIcon = (x: number, y: number) => {
-        const cx = x + 140; // posisi center X di kolom kanan
-        const cy = y + 50; // posisi center Y di kolom kanan
-
-        // Draw dot
-        doc
-          .circle(cx, cy + 12, 2.2)
-          .fillColor('#4a5568')
-          .fill();
-
-        // Draw arcs
-        doc.lineWidth(1.8).lineCap('round').strokeColor('#4a5568');
-
-        // Arc 1
-        doc
-          .path(`M ${cx - 6} ${cy + 6} A 8 8 0 0 1 ${cx + 6} ${cy + 6}`)
-          .stroke();
-
-        // Arc 2
-        doc.path(`M ${cx - 12} ${cy} A 16 16 0 0 1 ${cx + 12} ${cy}`).stroke();
-
-        // Arc 3
-        doc
-          .path(`M ${cx - 18} ${cy - 6} A 24 24 0 0 1 ${cx + 18} ${cy - 6}`)
-          .stroke();
-      };
-
-      vouchers.forEach((voucher, index) => {
+      (async () => {
+        try {
+          for (let index = 0; index < vouchers.length; index++) {
+            const voucher = vouchers[index];
         if (index > 0 && index % cardsPerPage === 0) {
           doc.addPage();
         }
@@ -318,8 +316,21 @@ export class VouchersService {
             },
           );
 
-        // Gambar WiFi Icon vector di sebelah kanan
-        drawWifiIcon(x, y);
+        // Generate and draw QR Code
+        const serverHost = voucher.server?.dnsName || voucher.server?.host || 'wifi.net';
+        const loginUrl = `http://${serverHost}/login?username=${voucher.username}&password=${voucher.password}`;
+        const qrBuffer = await QRCode.toBuffer(loginUrl, { 
+          errorCorrectionLevel: 'M', 
+          margin: 0, 
+          width: 50,
+          color: {
+            dark: '#2d3748', // Tailwind slate-800
+            light: '#ffffff'
+          }
+        });
+        
+        // Letakkan QR code di sisi kanan agak ke bawah sedikit
+        doc.image(qrBuffer, x + 115, y + 25, { width: 50 });
 
         // 5. Baris 2: Monospace Credentials (Tengah)
         const isVcMode = voucher.username === voucher.password;
@@ -367,7 +378,6 @@ export class VouchersService {
           });
 
         // 7. Baris 4 & Footer: Info Portal Login & No Index
-        const serverHost = voucher.server?.dnsName || voucher.server?.host || 'wifi.net';
         const numLabel = `[${index + 1}]`;
 
         doc
@@ -387,9 +397,13 @@ export class VouchersService {
             width: 20,
             align: 'right',
           });
-      });
-
-      doc.end();
+          }
+          
+          doc.end();
+        } catch (err) {
+          doc.emit('error', err);
+        }
+      })();
     });
   }
 
@@ -439,5 +453,86 @@ export class VouchersService {
     }
 
     return this.generatePdf(vouchers);
+  }
+
+  async deleteBulk(ids: string[]) {
+    // 1. Ambil data semua voucher berdasarkan ids
+    const vouchers = await this.prisma.voucher.findMany({
+      where: { id: { in: ids } },
+      include: { server: true },
+    });
+
+    if (vouchers.length === 0) {
+      throw new NotFoundException('Tidak ada voucher yang ditemukan untuk dihapus');
+    }
+
+    // 2. Validasi status harus UNUSED
+    const hasUsed = vouchers.some(v => v.status !== 'UNUSED');
+    if (hasUsed) {
+      throw new BadRequestException('Hanya voucher dengan status UNUSED yang dapat dihapus');
+    }
+
+    // 3. Kelompokkan berdasarkan serverId untuk pengecekan koneksi
+    const serverMap = new Map<string, any>();
+    for (const voucher of vouchers) {
+      if (!serverMap.has(voucher.serverId)) {
+        serverMap.set(voucher.serverId, voucher.server);
+      }
+    }
+
+    // 4. Verifikasi koneksi untuk semua server yang terlibat
+    for (const [serverId, server] of serverMap.entries()) {
+      if (!server) continue;
+      const connTest = await this.mikrotikService.testConnection(
+        server.host,
+        server.port,
+        server.username,
+        server.password,
+        server.useSSL,
+      );
+      if (!connTest.success) {
+        throw new BadRequestException(
+          `Router ${server.name} sedang offline atau tidak dapat dijangkau. Penghapusan dibatalkan demi menjaga konsistensi data.`
+        );
+      }
+    }
+
+    // 5. Hapus di MikroTik dan Database
+    let deletedCount = 0;
+    const usernamesDeleted: string[] = [];
+    const mainServerId = vouchers[0]?.serverId;
+
+    const promises = vouchers.map(async (voucher) => {
+      try {
+        await this.mikrotikService.removeHotspotUser(voucher.serverId, voucher.username);
+      } catch (error) {
+        // Abaikan error individual jika user tidak ditemukan di router
+      }
+      usernamesDeleted.push(voucher.username);
+      deletedCount++;
+    });
+
+    await Promise.allSettled(promises);
+
+    // Hapus dari database
+    await this.prisma.voucher.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    // 6. Catat Log
+    if (deletedCount > 0) {
+      await this.activityLogService.logAction({
+        action: 'VOUCHER_REVOKED',
+        serverId: mainServerId,
+        entity: 'Voucher',
+        detail: `Menghapus ${deletedCount} voucher secara massal (${usernamesDeleted.slice(0, 5).join(', ')}${usernamesDeleted.length > 5 ? '...' : ''})`,
+      });
+    }
+
+    return {
+      success: true,
+      message: `Berhasil menghapus ${deletedCount} voucher`,
+      deletedCount
+    };
   }
 }
