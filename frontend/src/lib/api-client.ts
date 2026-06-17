@@ -26,8 +26,18 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
-      // Hapus session dan arahkan paksa user ke halaman login
+    const status = error.response?.status;
+    const url: string = error.config?.url ?? '';
+
+    // PENTING: jangan auto-redirect untuk request login itu sendiri.
+    // 401 dari /auth/login = email/password salah → biarkan halaman login
+    // menampilkan pesan error. Tanpa pengecualian ini, login gagal akan
+    // memicu hard-reload ke /login sebelum banner error sempat muncul
+    // (gejala: "seperti refresh, balik ke login, tanpa pesan apa-apa").
+    const isAuthEndpoint = url.includes('/auth/login');
+
+    if (status === 401 && !isAuthEndpoint) {
+      // Token expired/invalid di tengah sesi → bersihkan & arahkan ke login.
       useAuthStore.getState().clearSession();
       if (typeof window !== 'undefined') {
         window.location.href = '/login';

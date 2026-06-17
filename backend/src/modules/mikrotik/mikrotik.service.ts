@@ -21,6 +21,25 @@ Channel.prototype.processPacket = function (packet: string[]) {
   if (packet[0] === '!empty') return; // v7: diikuti !done, abaikan saja
   _origProcessPacket.call(this, packet);
 };
+
+/**
+ * Buat instance RouterOSAPI dengan listener 'error' terpasang.
+ *
+ * node-routeros membungkus TLSSocket; saat koneksi SSL gagal (mis. port 8729
+ * tapi router tidak SSL, atau handshake TLS error) socket meng-emit event
+ * 'error' SECARA ASYNC di luar promise connect(). Tanpa listener, Node
+ * menganggapnya "Unhandled 'error' event" dan MEMATIKAN seluruh proses backend.
+ *
+ * Listener no-op di sini menyerap event tersebut agar tidak fatal; kegagalan
+ * tetap dilaporkan lewat promise connect()/write() yang ditangani try/catch.
+ */
+function createApi(opts: any) {
+  const api: any = new RouterOSAPI(opts);
+  api.on?.('error', () => {
+    /* diserap — error sebenarnya tetap di-reject lewat connect()/write() */
+  });
+  return api;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -42,7 +61,7 @@ export class MikrotikService {
     params: string[] = [],
     timeoutSec: number = 5,
   ): Promise<any[]> {
-    const api = new RouterOSAPI({
+    const api = createApi({
       host,
       user: username,
       password,
@@ -357,7 +376,7 @@ export class MikrotikService {
 
     const creds = await this.getServerCredentials(serverId);
 
-    const api = new RouterOSAPI({
+    const api = createApi({
       host: creds.host,
       user: creds.username,
       password: creds.password,
@@ -401,5 +420,44 @@ export class MikrotikService {
     }
 
     return { removed, notFound, failed };
+  }
+
+  /**
+   * Ambil snapshot monitoring (active users + system resource + interfaces) dalam
+   * SATU koneksi. Optimasi beban router: 1 login + 3 perintah, bukan 3 koneksi+login
+   * terpisah seperti memanggil getActiveUsers/getSystemResource/getInterfaces sendiri.
+   * Mengembalikan data MENTAH (mapping dilakukan di MonitoringService).
+   */
+  async getMonitoringSnapshot(serverId: string): Promise<{
+    active: any[];
+    resource: any;
+    interfaces: any[];
+  }> {
+    const creds = await this.getServerCredentials(serverId);
+
+    const api = createApi({
+      host: creds.host,
+      user: creds.username,
+      password: creds.password,
+      port: creds.port || (creds.useSSL ? 8729 : 8728),
+      ...(creds.useSSL ? { tls: { rejectUnauthorized: false } } : {}),
+      timeout: 10,
+    });
+
+    try {
+      await api.connect();
+      // Sekuensial pada koneksi yang sama (tetap 1 login)
+      const active = await api.write('/ip/hotspot/active/print');
+      const resource = await api.write('/system/resource/print');
+      const interfaces = await api.write('/interface/print');
+
+      return {
+        active: Array.isArray(active) ? active : [],
+        resource: Array.isArray(resource) ? (resource[0] ?? {}) : {},
+        interfaces: Array.isArray(interfaces) ? interfaces : [],
+      };
+    } finally {
+      await api.close().catch(() => {});
+    }
   }
 }

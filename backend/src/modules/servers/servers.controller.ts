@@ -49,6 +49,17 @@ export class ServersController {
     return this.serversService.findAll();
   }
 
+  @Post('refresh-status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Refresh status koneksi SEMUA router (sinkronisasi terpusat)',
+  })
+  @ApiResponse({ status: 200, description: 'Status semua router diperbarui' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async refreshStatus() {
+    return this.serversService.refreshAllStatus();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Ambil detail router MikroTik berdasarkan ID' })
   @ApiResponse({ status: 200, description: 'Detail router berhasil diambil' })

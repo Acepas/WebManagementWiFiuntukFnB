@@ -1,9 +1,11 @@
 "use client";
 
 import apiClient from "@/lib/api-client";
+import { useToastStore } from "@/store/toast-store";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useParams, useRouter } from "next/navigation";
+import { Card, Button, Banner, Modal } from "@/components/ui";
 import {
   BrainCircuit,
   Loader2,
@@ -11,7 +13,8 @@ import {
   Copy,
   CheckCircle,
   ArrowLeft,
-  Download
+  Download,
+  Trash2,
 } from "lucide-react";
 
 interface AiReport {
@@ -22,10 +25,7 @@ interface AiReport {
   resultMd: string;
   status: string;
   createdAt: string;
-  server?: {
-    name: string;
-    host: string;
-  };
+  server?: { name: string; host: string };
 }
 
 export default function AiReportDetailPage() {
@@ -37,11 +37,12 @@ export default function AiReportDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [isCopied, setIsCopied] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      loadReport(id);
-    }
+    if (id) loadReport(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const loadReport = async (reportId: string) => {
@@ -51,7 +52,7 @@ export default function AiReportDetailPage() {
       setReport(response.data);
     } catch (error: any) {
       console.error("Failed to load AI report:", error);
-      setErrorMessage("Gagal memuat laporan AI. Mungkin laporan telah dihapus atau tidak ditemukan.");
+      setErrorMessage("Gagal memuat laporan. Mungkin sudah dihapus atau tidak ditemukan.");
     } finally {
       setIsLoading(false);
     }
@@ -65,21 +66,35 @@ export default function AiReportDetailPage() {
     }
   };
 
+  const executeDelete = async () => {
+    const toast = useToastStore.getState();
+    setIsDeleting(true);
+    try {
+      await apiClient.delete(`/ai/reports/${id}`);
+      toast.success("Laporan dihapus.", "Berhasil dihapus");
+      router.push("/ai");
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || error.message || "Gagal menghapus laporan.", "Gagal menghapus");
+      setIsDeleting(false);
+      setIsDeleteOpen(false);
+    }
+  };
+
+  // ── Download PDF — LOGIKA TIDAK DIUBAH (selector .prose kritis) ────────────
   const handleDownloadPdf = async () => {
     if (!report) return;
-    
+
     try {
       // @ts-ignore
       const html2pdf = (await import("html2pdf.js")).default;
-      
-      // Ambil elemen konten markdown
+
       const markdownElement = document.querySelector(".prose");
       if (!markdownElement) {
         alert("Konten laporan tidak ditemukan.");
         return;
       }
 
-      // Buat iframe tersembunyi untuk isolasi CSS (menghindari error oklab Tailwind v4)
+      // Iframe tersembunyi untuk isolasi CSS (hindari error oklab Tailwind v4)
       const iframe = document.createElement("iframe");
       iframe.style.position = "absolute";
       iframe.style.width = "0";
@@ -90,7 +105,6 @@ export default function AiReportDetailPage() {
       const doc = iframe.contentWindow?.document || iframe.contentDocument;
       if (!doc) throw new Error("Gagal membuat iframe dokumen");
 
-      // Tulis struktur HTML sederhana dengan CSS standar (tanpa oklab/oklch)
       doc.open();
       doc.write(`
         <html>
@@ -107,12 +121,12 @@ export default function AiReportDetailPage() {
               pre { background-color: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; border: 1px solid #e1e4e8; }
               pre code { background-color: transparent; padding: 0; color: #24292e; }
               blockquote { border-left: 4px solid #dfe2e5; color: #6a737d; padding-left: 16px; margin-left: 0; }
-              
-              .pdf-header { border-bottom: 2px solid #0052cc; padding-bottom: 16px; margin-bottom: 24px; }
-              .pdf-title { font-size: 28px; font-weight: bold; color: #0052cc; margin: 0 0 8px 0; border: none; }
+
+              .pdf-header { border-bottom: 2px solid #111111; padding-bottom: 16px; margin-bottom: 24px; }
+              .pdf-title { font-size: 28px; font-weight: bold; color: #111111; margin: 0 0 8px 0; border: none; }
               .pdf-meta { font-size: 12px; color: #555555; display: flex; flex-direction: column; gap: 4px; }
               .pdf-meta strong { color: #333333; }
-              .badge { display: inline-block; background: #e3fcef; color: #006644; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 11px; }
+              .badge { display: inline-block; background: #f0f0f0; color: #333333; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 11px; }
             </style>
           </head>
           <body>
@@ -122,7 +136,7 @@ export default function AiReportDetailPage() {
                 <div class="pdf-meta">
                   <div><strong>Target Router:</strong> <span class="badge">${report.server?.name || "Unknown Server"} (${report.server?.host || "N/A"})</span></div>
                   <div><strong>Model AI:</strong> <span style="text-transform: capitalize;">${report.provider}</span></div>
-                  <div><strong>Tanggal:</strong> ${new Date(report.createdAt).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })} WIB</div>
+                  <div><strong>Tanggal:</strong> ${new Date(report.createdAt).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })} WIB</div>
                 </div>
               </div>
               <div class="pdf-body">
@@ -134,24 +148,28 @@ export default function AiReportDetailPage() {
       `);
       doc.close();
 
-      // Konfigurasi html2pdf
       const opt = {
-        margin: [15, 15, 20, 15],
-        filename: `Laporan-AI-${report.server?.name || "Server"}-${new Date(report.createdAt).toISOString().split('T')[0]}.pdf`,
-        image: { type: 'jpeg', quality: 1.0 },
+        margin: [15, 15, 20, 15] as [number, number, number, number],
+        filename: `Laporan-AI-${report.server?.name || "Server"}-${new Date(report.createdAt).toISOString().split("T")[0]}.pdf`,
+        image: { type: "jpeg" as const, quality: 1.0 },
         html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        jsPDF: { unit: "mm" as const, format: "a4" as const, orientation: "portrait" as const },
       };
 
-      // Jalankan konversi pada elemen di dalam iframe
       setTimeout(() => {
-        const targetElement = doc.getElementById('pdf-wrapper');
-        html2pdf().set(opt).from(targetElement).save().then(() => {
-          // Hapus iframe setelah selesai
+        const targetElement = doc.getElementById("pdf-wrapper");
+        if (!targetElement) {
           document.body.removeChild(iframe);
-        });
-      }, 500); // Tunggu sebentar agar iframe selesai render
-
+          return;
+        }
+        html2pdf()
+          .set(opt)
+          .from(targetElement)
+          .save()
+          .then(() => {
+            document.body.removeChild(iframe);
+          });
+      }, 500);
     } catch (error) {
       console.error("Gagal mengunduh PDF:", error);
       alert("Terjadi kesalahan internal saat membuat PDF.");
@@ -160,9 +178,9 @@ export default function AiReportDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[50vh] text-on-surface-variant">
-        <Loader2 className="w-10 h-10 animate-spin mb-4 text-primary" />
-        <p className="text-sm font-medium">Memuat Laporan Analisis AI...</p>
+      <div className="flex flex-col items-center justify-center min-h-[50vh] text-mute">
+        <Loader2 className="w-8 h-8 animate-spin mb-3" />
+        <p className="text-sm">Memuat laporan…</p>
       </div>
     );
   }
@@ -170,110 +188,99 @@ export default function AiReportDetailPage() {
   if (errorMessage || !report) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] text-center max-w-md mx-auto">
-        <div className="w-16 h-16 bg-error-container text-on-error-container rounded-full flex items-center justify-center mb-4">
-          <AlertCircle className="w-8 h-8" />
+        <div className="w-14 h-14 rounded-full border border-hairline flex items-center justify-center mb-4 text-mute">
+          <AlertCircle className="w-6 h-6" strokeWidth={1.5} />
         </div>
-        <h3 className="text-lg font-bold text-on-surface mb-2">Laporan Tidak Ditemukan</h3>
-        <p className="text-sm text-on-surface-variant mb-6">{errorMessage}</p>
-        <button
-          onClick={() => router.push('/ai')}
-          className="flex items-center gap-2 px-5 py-2.5 bg-primary text-on-primary font-semibold rounded-xl hover:bg-primary/90 transition-colors shadow-sm"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Kembali ke AI Assistant
-        </button>
+        <h3 className="font-display text-lg font-semibold text-ink mb-2">Laporan tidak ditemukan</h3>
+        <p className="text-sm text-body mb-6">{errorMessage}</p>
+        <Button onClick={() => router.push("/ai")}>
+          <ArrowLeft className="w-4 h-4" /> Kembali ke AI Analis
+        </Button>
       </div>
     );
   }
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto pb-10">
-      {/* Header & Back Button */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.push('/ai')}
-            className="p-2.5 bg-surface-container border border-outline-variant text-on-surface hover:bg-surface-variant hover:text-primary rounded-xl transition-all shadow-sm active:scale-95"
-            title="Kembali ke AI Assistant"
+            onClick={() => router.push("/ai")}
+            className="w-9 h-9 flex items-center justify-center rounded-full border border-hairline text-charcoal hover:bg-surface-soft hover:text-ink transition-colors"
+            title="Kembali"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-on-surface flex items-center gap-2">
-              <BrainCircuit className="w-6 h-6 text-primary" />
-              Laporan Analisis AI
-            </h1>
-            <p className="text-on-surface-variant text-sm mt-0.5 hidden sm:block">
-              Detail hasil diagnosa keamanan dan performa router.
-            </p>
+            <h1 className="font-display text-2xl font-semibold text-ink">Laporan Analisis AI</h1>
+            <p className="text-sm text-body mt-0.5 hidden sm:block">Hasil diagnosa keamanan & performa router.</p>
           </div>
         </div>
 
-        {/* Action Buttons */}
+        {/* Aksi */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownloadPdf}
-            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm bg-surface-container border border-outline-variant hover:bg-surface-variant text-on-surface"
-            title="Unduh laporan dalam format PDF"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">Unduh PDF</span>
-            <span className="sm:hidden">PDF</span>
-          </button>
-          
-          <button
-            onClick={handleCopyResult}
-            disabled={isCopied}
-            className={`flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm ${
-              isCopied
-                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                : "bg-primary text-on-primary hover:bg-primary/90"
-            }`}
-          >
-            {isCopied ? (
-              <>
-                <CheckCircle className="w-4 h-4" />
-                <span className="hidden sm:inline">Berhasil Disalin!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-4 h-4" />
-                <span className="hidden sm:inline">Salin Laporan</span>
-              </>
-            )}
-          </button>
+          <Button variant="secondary" onClick={handleDownloadPdf}>
+            <Download className="w-4 h-4" /> <span className="hidden sm:inline">Unduh PDF</span>
+          </Button>
+          <Button variant="secondary" onClick={handleCopyResult} disabled={isCopied}>
+            {isCopied ? <CheckCircle className="w-4 h-4 text-ok" /> : <Copy className="w-4 h-4" />}
+            <span className="hidden sm:inline">{isCopied ? "Tersalin" : "Salin"}</span>
+          </Button>
+          <Button variant="danger" onClick={() => setIsDeleteOpen(true)}>
+            <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Hapus</span>
+          </Button>
         </div>
       </div>
 
-      {/* Main Content Card */}
-      <div id="pdf-content" className="bg-surface-container-lowest border border-outline-variant rounded-2xl shadow-sm overflow-hidden flex flex-col">
-        {/* Card Info Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-5 border-b border-outline-variant bg-surface-container-low gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Target Router:</span>
-            <span className="text-sm font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-md">
-              {report.server?.name || "Unknown Server"}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <div className="flex items-center gap-1.5 text-on-surface-variant">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></span>
-              Model: <strong className="capitalize text-on-surface">{report.provider}</strong>
-            </div>
-            <div className="w-1 h-1 rounded-full bg-outline-variant hidden sm:block"></div>
-            <div className="text-on-surface-variant">
-              Dianalisis pada: <strong className="text-on-surface">{new Date(report.createdAt).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })}</strong>
-            </div>
-          </div>
+      {/* Kartu konten — gaya terminal-card */}
+      <Card padded={false} className="overflow-hidden">
+        {/* Header: traffic-lights + judul */}
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-hairline bg-surface-soft">
+          <span className="w-3 h-3 rounded-full bg-terminal-red" />
+          <span className="w-3 h-3 rounded-full bg-terminal-yellow" />
+          <span className="w-3 h-3 rounded-full bg-terminal-green" />
+          <span className="ml-2 text-xs text-mute font-mono truncate">
+            ai-report — {report.server?.name || "router"}
+          </span>
         </div>
 
-        {/* Markdown Render Area */}
-        <div className="p-5 sm:p-8 overflow-x-auto bg-surface prose prose-sm sm:prose-base max-w-none prose-p:text-on-surface-variant prose-strong:text-on-surface prose-li:text-on-surface-variant prose-headings:text-primary prose-a:text-primary prose-code:text-emerald-600 dark:prose-code:text-emerald-400 prose-pre:bg-surface-container-low prose-pre:border prose-pre:border-outline-variant prose-hr:border-outline-variant">
-          <ReactMarkdown>
-            {report.resultMd}
-          </ReactMarkdown>
+        {/* Baris prompt mono — meta analisis */}
+        <div className="px-5 sm:px-8 pt-5 font-mono text-[13px] leading-relaxed">
+          <div className="text-ink">
+            <span className="text-mute">$</span> ai analyze --target {report.server?.host || report.server?.name || "router"} --model {report.provider}
+          </div>
+          <div className="text-mute">
+            # {new Date(report.createdAt).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })}
+          </div>
+          <div className="text-terminal-green">→ analisis selesai, hasil di bawah:</div>
         </div>
-      </div>
+
+        {/* Markdown — styling Ollama netral */}
+        <div className="p-5 sm:px-8 sm:pt-4 sm:pb-8 overflow-x-auto prose prose-sm sm:prose-base max-w-none prose-headings:font-display prose-headings:text-ink prose-p:text-body prose-strong:text-ink prose-li:text-body prose-a:text-ink prose-code:text-charcoal prose-code:font-mono prose-pre:bg-surface-soft prose-pre:border prose-pre:border-hairline prose-pre:rounded-[12px] prose-hr:border-hairline prose-blockquote:border-l-hairline-strong prose-blockquote:text-mute">
+          <ReactMarkdown>{report.resultMd}</ReactMarkdown>
+        </div>
+      </Card>
+
+      {/* Konfirmasi hapus */}
+      <Modal
+        open={isDeleteOpen}
+        onClose={() => !isDeleting && setIsDeleteOpen(false)}
+        title="Hapus laporan?"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsDeleteOpen(false)} disabled={isDeleting}>
+              Batal
+            </Button>
+            <Button variant="danger" onClick={executeDelete} loading={isDeleting}>
+              <Trash2 className="w-4 h-4" /> Hapus
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-body leading-relaxed">Yakin hapus laporan analisis ini? Tindakan ini tak bisa dibatalkan.</p>
+      </Modal>
     </div>
   );
 }

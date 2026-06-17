@@ -3,15 +3,18 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
-import { Activity, Mail, Lock, LogIn, Loader2 } from "lucide-react";
+import { Wifi, Eye, EyeOff, CreditCard } from "lucide-react";
+import { Button, Input, Label } from "@/components/ui";
+import { LoginDemo } from "./LoginDemo";
 import apiClient from "@/lib/api-client";
 
 export default function LoginPage() {
   const router = useRouter();
   const setSession = useAuthStore((state) => state.setSession);
-  
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -23,97 +26,161 @@ export default function LoginPage() {
     try {
       // Admin Backend Login
       const response = await apiClient.post("/auth/login", { email, password });
-      
+
       const { accessToken, admin } = response.data;
-      
+
       setSession(accessToken, admin);
       router.push("/dashboard");
     } catch (err: any) {
-      setError(err.response?.data?.message || "Login failed. Please check your credentials.");
+      setError(
+        err.response?.data?.message || "Login gagal. Cek lagi email sama kata sandimu, ya.",
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface relative overflow-hidden font-sans">
-      {/* Animated Flowing Background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-primary-container via-surface to-secondary-container animate-flow opacity-60 z-0"></div>
-      
-      {/* Decorative Orbs */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-secondary rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse" style={{ animationDelay: '2s' }}></div>
-
-      <div className="w-full max-w-md p-8 glass rounded-3xl shadow-2xl relative z-10 border border-outline-variant/30">
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-primary text-on-primary rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-primary/30">
-            <Activity className="w-8 h-8" />
+    <div className="min-h-screen bg-canvas flex font-sans text-body">
+      {/* ── Kiri: Form ─────────────────────────────────────────────────── */}
+      <div className="flex-1 flex items-center justify-center px-6 py-10">
+        <div className="w-full max-w-[380px] animate-fade-in">
+          {/* Brand */}
+          <div className="flex items-center gap-2 mb-12">
+            <div className="w-8 h-8 rounded-lg bg-ink text-on-dark flex items-center justify-center">
+              <Wifi className="w-4 h-4" strokeWidth={2} />
+            </div>
+            <span className="font-display text-lg font-semibold text-ink">
+              WiFi Management
+            </span>
           </div>
-          <h1 className="text-3xl font-bold text-on-surface">Welcome Back</h1>
-          <p className="text-on-surface-variant mt-2 text-center text-sm">
-            Sign in to FnB WiFi Management System
+
+          {/* Heading */}
+          <h1 className="font-display text-[28px] leading-tight font-semibold text-ink">
+            Masuk ke akunmu
+          </h1>
+          <p className="mt-1.5 text-sm text-body">
+            Isi email sama kata sandi buat lanjut.
           </p>
-        </div>
 
-        {error && (
-          <div className="mb-6 p-4 bg-error-container text-on-error-container rounded-xl text-sm border border-error/20 flex items-start gap-2">
-            <div className="mt-0.5">⚠️</div>
-            <p>{error}</p>
-          </div>
-        )}
+          {/* Error banner */}
+          {error && (
+            <div className="mt-6 px-4 py-3 rounded-[12px] border border-hairline bg-surface-soft text-sm text-charcoal">
+              {error}
+            </div>
+          )}
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-on-surface ml-1">Email Address</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-on-surface-variant">
-                <Mail className="h-5 w-5" />
-              </div>
-              <input
+          <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+            <div>
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-surface-variant/50 border border-outline-variant text-on-surface rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent transition-all outline-none"
-                placeholder="admin@wifimanagement.local"
+                placeholder="Masukin emailmu"
+                autoComplete="email"
                 required
               />
             </div>
-          </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between ml-1">
-              <label className="text-sm font-medium text-on-surface">Password</label>
-            </div>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-on-surface-variant">
-                <Lock className="h-5 w-5" />
+            <div>
+              <Label htmlFor="password">Kata Sandi</Label>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  className="pr-11"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full text-mute hover:text-ink hover:bg-surface-soft transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[rgba(59,130,246,0.5)]"
+                  aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
+                  tabIndex={-1}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" strokeWidth={1.75} />
+                  ) : (
+                    <Eye className="w-4 h-4" strokeWidth={1.75} />
+                  )}
+                </button>
               </div>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-surface-variant/50 border border-outline-variant text-on-surface rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent transition-all outline-none"
-                placeholder="••••••••"
-                required
-              />
             </div>
+
+            {/* Lupa password */}
+            <div className="flex justify-end pt-0.5">
+              <button
+                type="button"
+                className="text-sm font-medium text-ink hover:underline"
+                title="Hubungi admin untuk reset kata sandi"
+              >
+                Lupa sandi?
+              </button>
+            </div>
+
+            <Button type="submit" loading={isLoading} className="w-full mt-1">
+              {isLoading ? "Sebentar ya…" : "Masuk"}
+            </Button>
+          </form>
+
+          {/* Divider */}
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-hairline" />
+            <span className="text-xs text-mute">ATAU</span>
+            <div className="flex-1 h-px bg-hairline" />
           </div>
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full py-3.5 px-4 bg-primary text-on-primary rounded-xl font-medium shadow-md shadow-primary/20 hover:bg-primary/90 hover:-translate-y-0.5 hover:shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none mt-2 flex items-center justify-center gap-2"
+          {/* SmartCard (hiasan — belum aktif) */}
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full"
+            title="Fitur SmartCard belum tersedia"
           >
-            {isLoading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <>
-                <LogIn className="w-5 h-5" />
-                Sign In
-              </>
-            )}
-          </button>
-        </form>
+            <CreditCard className="w-4 h-4" strokeWidth={1.75} />
+            Masuk pakai SmartCard
+          </Button>
+
+          {/* Footer */}
+          <p className="mt-10 text-xs text-mute">
+            Dengan masuk, kamu setuju sama{" "}
+            <span className="text-charcoal underline cursor-pointer">Ketentuan Pakai</span>.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Kanan: Panel branding (surface-dark) ───────────────────────── */}
+      <div className="hidden lg:flex flex-1 p-3">
+        <div className="relative w-full rounded-[20px] bg-surface-dark text-on-dark overflow-hidden flex flex-col justify-between p-12">
+          {/* Brand kecil di atas */}
+          <div className="flex items-center gap-2 text-on-dark">
+            <Wifi className="w-5 h-5" strokeWidth={2} />
+            <span className="font-display font-semibold">WiFi Management</span>
+          </div>
+
+          {/* Tagline */}
+          <div className="relative z-10">
+            <h2 className="font-display text-[34px] leading-[1.15] font-semibold max-w-[420px]">
+              Kelola hotspot &amp; voucher kafemu dari satu tempat.
+            </h2>
+            <p className="mt-4 text-[15px] text-on-dark-mute max-w-[400px] leading-relaxed">
+              Pantau router MikroTik, bikin voucher, sama lihat siapa yang lagi
+              nyambung — semua real-time.
+            </p>
+          </div>
+
+          {/* Mockup mini-dashboard animasi alur kerja (auto-play, loop) */}
+          <LoginDemo />
+
+          {/* Glow halus latar */}
+          <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-white/[0.04] blur-3xl pointer-events-none" />
+        </div>
       </div>
     </div>
   );

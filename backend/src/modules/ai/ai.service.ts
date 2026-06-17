@@ -239,4 +239,47 @@ ${configJson}`;
     }
     return report;
   }
+
+  /**
+   * Hapus satu laporan AI berdasarkan ID.
+   */
+  async deleteReport(reportId: string) {
+    const report = await this.prisma.aiReport.findUnique({
+      where: { id: reportId },
+    });
+    if (!report) {
+      throw new NotFoundException(`Laporan dengan ID ${reportId} tidak ditemukan`);
+    }
+
+    await this.prisma.aiReport.delete({ where: { id: reportId } });
+
+    await this.activityLogService.logAction({
+      action: 'AI_ANALYSIS_DELETED',
+      serverId: report.serverId,
+      entity: 'AiReport',
+      entityId: reportId,
+      detail: 'Menghapus laporan AI analysis',
+    });
+
+    return { success: true, message: 'Laporan berhasil dihapus' };
+  }
+
+  /**
+   * Hapus SEMUA laporan AI (clear riwayat).
+   */
+  async deleteAllReports() {
+    const result = await this.prisma.aiReport.deleteMany({});
+
+    await this.activityLogService.logAction({
+      action: 'AI_ANALYSIS_DELETED',
+      entity: 'AiReport',
+      detail: `Menghapus semua laporan AI (${result.count})`,
+    });
+
+    return {
+      success: true,
+      deletedCount: result.count,
+      message: `${result.count} laporan berhasil dihapus`,
+    };
+  }
 }

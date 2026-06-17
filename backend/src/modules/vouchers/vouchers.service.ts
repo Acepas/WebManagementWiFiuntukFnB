@@ -472,32 +472,11 @@ export class VouchersService {
       throw new BadRequestException('Hanya voucher dengan status UNUSED yang dapat dihapus');
     }
 
-    // 3. Kelompokkan berdasarkan serverId untuk pengecekan koneksi
-    const serverMap = new Map<string, any>();
-    for (const voucher of vouchers) {
-      if (!serverMap.has(voucher.serverId)) {
-        serverMap.set(voucher.serverId, voucher.server);
-      }
-    }
-
-    // 4. Verifikasi koneksi untuk semua server yang terlibat
-    for (const [serverId, server] of serverMap.entries()) {
-      if (!server) continue;
-      const connTest = await this.mikrotikService.testConnection(
-        server.host,
-        server.port,
-        server.username,
-        server.password,
-        server.useSSL,
-      );
-      if (!connTest.success) {
-        throw new BadRequestException(
-          `Router ${server.name} sedang offline atau tidak dapat dijangkau. Penghapusan dibatalkan demi menjaga konsistensi data.`
-        );
-      }
-    }
-
-    // 5. Hapus di MikroTik (1 koneksi per server) lalu korelasikan hasilnya ke DB.
+    // 3. Hapus di MikroTik (1 koneksi per server) lalu korelasikan hasilnya ke DB.
+    //    Tidak ada lagi pre-check testConnection di sini: selain redundan, pre-check lama
+    //    memakai password TERENKRIPSI (tanpa dekripsi) sehingga selalu gagal auth → false
+    //    "router offline". removeHotspotUsersByNames sudah partial-safe: bila router offline,
+    //    semua voucher masuk `failed` (tetap di DB) dan dilaporkan ke frontend.
     //    Partial-safe: DB hanya menghapus voucher yang BENAR-BENAR terhapus di router
     //    (removed) atau yang memang sudah tidak ada di router (notFound). Voucher yang
     //    GAGAL dihapus di router tetap di DB agar bisa di-retry — tidak hilang sepihak.

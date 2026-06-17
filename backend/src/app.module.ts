@@ -11,6 +11,7 @@ import { VouchersModule } from './modules/vouchers/vouchers.module.js';
 import { MonitoringModule } from './modules/monitoring/monitoring.module.js';
 import { AiModule } from './modules/ai/ai.module.js';
 import { ActivityLogModule } from './modules/activity-log/activity-log.module.js';
+import { PosModule } from './modules/pos/pos.module.js';
 import appConfig from './config/app.config.js';
 import databaseConfig from './config/database.config.js';
 import jwtConfig from './config/jwt.config.js';
@@ -46,6 +47,7 @@ import aiConfig from './config/ai.config.js';
     MonitoringModule,
     AiModule,
     ActivityLogModule,
+    PosModule,
   ],
   providers: [
     // Rate limiting global — terapkan ThrottlerGuard ke semua route

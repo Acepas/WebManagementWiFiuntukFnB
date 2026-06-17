@@ -1,8 +1,9 @@
 "use client";
 
 import { useServerStore } from "@/store/server-store";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import apiClient from "@/lib/api-client";
+import { Card, PageHeader, Button, StatusDot, EmptyState } from "@/components/ui";
 import {
   Users,
   Ticket,
@@ -14,13 +15,12 @@ import {
   Search,
   Clock,
   HardDrive,
-  Terminal,
-  Network,
-  Radio,
   AlertTriangle,
-  Play,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Network,
+  Server as ServerIcon,
+  ArrowRight,
 } from "lucide-react";
 
 interface ActiveUser {
@@ -66,23 +66,23 @@ interface InterfaceTraffic {
 
 export default function DashboardPage() {
   const { activeServerId, servers, setActiveServerId, checkActiveServerStatus, isSyncing } = useServerStore();
-  
+
   const [activeUsers, setActiveUsers] = useState<ActiveUser[]>([]);
   const [resources, setResources] = useState<RouterResources | null>(null);
   const [traffic, setTraffic] = useState<InterfaceTraffic[]>([]);
   const [vouchersCount, setVouchersCount] = useState<number>(0);
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [isSilentLoading, setIsSilentLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   const [searchQuery, setSearchQuery] = useState("");
-  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(3); // Default 3s (Tuntutan Real-Time)
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(3); // Default 3s (real-time)
   const [countdown, setCountdown] = useState<number>(3);
 
-  const activeServer = servers.find(s => s.id === activeServerId);
+  const activeServer = servers.find((s) => s.id === activeServerId);
 
-  // Helper untuk format Bytes ke KB/MB/GB
+  // Helper format Bytes → KB/MB/GB
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return "0 B";
     const k = 1024;
@@ -91,66 +91,78 @@ export default function DashboardPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  // Helper untuk format Uptime MikroTik (misal: 2d12h4m5s -> 2 Hari, 12 Jam...)
+  // Helper format Uptime MikroTik. Input RouterOS: "1w2d3h4m5s". Parse per-unit
+  // via regex agar tidak salah-ganti huruf di label Indonesia; tampilkan maks 2
+  // unit terbesar yang bernilai (mis. "2 jam 49 menit") agar ringkas.
   const formatUptime = (uptimeStr: string) => {
     if (!uptimeStr || uptimeStr === "Unknown" || uptimeStr === "-") return "-";
-    
-    // Jika format standar Mikrotik e.g. 1w2d12h4m5s atau 12h4m5s
-    let formatted = uptimeStr;
-    formatted = formatted.replace("w", " Minggu ");
-    formatted = formatted.replace("d", " Hari ");
-    formatted = formatted.replace("h", " Jam ");
-    formatted = formatted.replace("m", " Menit ");
-    formatted = formatted.replace("s", " Detik");
-    return formatted.trim();
+
+    const units: { re: RegExp; label: string }[] = [
+      { re: /(\d+)w/, label: "minggu" },
+      { re: /(\d+)d/, label: "hari" },
+      { re: /(\d+)h/, label: "jam" },
+      { re: /(\d+)m(?!s)/, label: "menit" },
+      { re: /(\d+)s/, label: "detik" },
+    ];
+
+    const parts: string[] = [];
+    for (const { re, label } of units) {
+      const match = uptimeStr.match(re);
+      if (match && parseInt(match[1], 10) > 0) {
+        parts.push(`${parseInt(match[1], 10)} ${label}`);
+      }
+    }
+
+    if (parts.length === 0) return uptimeStr;
+    return parts.slice(0, 2).join(" ");
   };
 
   // Fetch data dashboard
-  const fetchDashboardData = useCallback(async (silent = false) => {
-    if (!activeServerId) return;
+  const fetchDashboardData = useCallback(
+    async (silent = false) => {
+      if (!activeServerId) return;
 
-    if (silent) {
-      setIsSilentLoading(true);
-    } else {
-      setIsLoading(true);
-      setError(null);
-    }
+      if (silent) {
+        setIsSilentLoading(true);
+      } else {
+        setIsLoading(true);
+        setError(null);
+      }
 
-    try {
-      // 1. Fetch Active Users
-      const activeRes = await apiClient.get<ActiveUser[]>(`/monitoring/active/${activeServerId}`);
-      setActiveUsers(activeRes.data);
+      try {
+        // 1. Snapshot monitoring (active + resource + traffic) — SATU panggilan,
+        //    di backend 1 koneksi router (1 login, 3 perintah) → hemat beban ~3x.
+        const snapRes = await apiClient.get<{
+          activeUsers: ActiveUser[];
+          resources: RouterResources;
+          traffic: InterfaceTraffic[];
+        }>(`/monitoring/snapshot/${activeServerId}`);
+        setActiveUsers(snapRes.data.activeUsers);
+        setResources(snapRes.data.resources);
+        setTraffic(snapRes.data.traffic);
 
-      // 2. Fetch Resources
-      const resourcesRes = await apiClient.get<RouterResources>(`/monitoring/resources/${activeServerId}`);
-      setResources(resourcesRes.data);
+        // 2. Count voucher server ini (dari DB)
+        const vouchersRes = await apiClient.get<any[]>("/vouchers");
+        const filteredVouchers = vouchersRes.data.filter((v: any) => v.serverId === activeServerId);
+        setVouchersCount(filteredVouchers.length);
 
-      // Fetch Traffic
-      const trafficRes = await apiClient.get<InterfaceTraffic[]>(`/monitoring/traffic/${activeServerId}`);
-      setTraffic(trafficRes.data);
+        setError(null);
+      } catch (err: any) {
+        console.error("Dashboard fetch error:", err);
+        checkActiveServerStatus();
+        setError(err.response?.data?.message || err.message || "Gagal terhubung ke router MikroTik.");
+        setActiveUsers([]);
+        setResources(null);
+        setTraffic([]);
+      } finally {
+        setIsLoading(false);
+        setIsSilentLoading(false);
+      }
+    },
+    [activeServerId, checkActiveServerStatus],
+  );
 
-      // 3. Fetch Vouchers (to count vouchers for this server)
-      const vouchersRes = await apiClient.get<any[]>("/vouchers");
-      const filteredVouchers = vouchersRes.data.filter((v: any) => v.serverId === activeServerId);
-      setVouchersCount(filteredVouchers.length);
-      
-      setError(null);
-    } catch (err: any) {
-      console.error("Dashboard fetch error:", err);
-      // Jika error, coba test status server utama di store
-      checkActiveServerStatus();
-      setError(err.response?.data?.message || err.message || "Gagal terhubung ke router MikroTik.");
-      // Reset data
-      setActiveUsers([]);
-      setResources(null);
-      setTraffic([]);
-    } finally {
-      setIsLoading(false);
-      setIsSilentLoading(false);
-    }
-  }, [activeServerId, checkActiveServerStatus]);
-
-  // Trigger fetch ketika server aktif berubah atau selesai sinkronisasi
+  // Trigger fetch saat server aktif berubah / selesai sinkronisasi
   useEffect(() => {
     if (activeServerId && !isSyncing) {
       fetchDashboardData(false);
@@ -158,7 +170,7 @@ export default function DashboardPage() {
     }
   }, [activeServerId, isSyncing, fetchDashboardData, autoRefreshInterval]);
 
-  // Efek Timer Hitung Mundur Auto-Refresh
+  // Timer hitung mundur auto-refresh
   useEffect(() => {
     if (!activeServerId || autoRefreshInterval === 0 || error) return;
 
@@ -177,79 +189,76 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [activeServerId, autoRefreshInterval, fetchDashboardData, error]);
 
-  // Manual refresh handler
   const handleManualRefresh = () => {
     fetchDashboardData(false);
     setCountdown(autoRefreshInterval);
   };
 
-  // Filter active users by search query
-  const filteredUsers = activeUsers.filter(u => 
-    u.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    u.ipAddress.includes(searchQuery) ||
-    u.macAddress.toLowerCase().includes(searchQuery.toLowerCase())
+  // Filter user aktif by search
+  const filteredUsers = activeUsers.filter(
+    (u) =>
+      u.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.ipAddress.includes(searchQuery) ||
+      u.macAddress.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
-  // Perhitungan presentase memory & hdd
   const memoryUsagePercent = resources
     ? Math.round(((resources.totalMemory - resources.freeMemory) / resources.totalMemory) * 100)
     : 0;
-
   const hddUsagePercent = resources
     ? Math.round(((resources.totalHddSpace - resources.freeHddSpace) / resources.totalHddSpace) * 100)
     : 0;
 
-  // Render State 1: Belum Pilih Router
+  // ── State 1: Belum pilih router ───────────────────────────────────────────
   if (!activeServerId) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center bg-surface">
-        <div className="w-24 h-24 bg-primary-container/40 rounded-full flex items-center justify-center mb-6 shadow-inner animate-pulse">
-          <Wifi className="w-12 h-12 text-primary" />
+      <div className="max-w-4xl mx-auto">
+        <div className="text-center pt-10 pb-8">
+          <div className="w-14 h-14 rounded-full border border-hairline flex items-center justify-center mx-auto mb-5 text-ink">
+            <Wifi className="w-6 h-6" strokeWidth={1.5} />
+          </div>
+          <h1 className="font-display text-[28px] font-semibold text-ink">Selamat datang</h1>
+          <p className="text-body mt-2 max-w-md mx-auto text-sm">
+            Pilih salah satu router di pojok kanan atas, atau klik kartu di bawah buat mulai memantau.
+          </p>
         </div>
-        <h1 className="text-3xl font-extrabold text-on-surface tracking-tight mb-2">Selamat Datang di WiFi Management</h1>
-        <p className="text-on-surface-variant max-w-md mb-8">
-          Silakan pilih salah satu router MikroTik aktif di pojok kanan atas atau klik daftar server di bawah untuk mulai memantau secara real-time.
-        </p>
 
         {servers.length === 0 ? (
-          <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant max-w-sm w-full shadow-sm">
-            <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-            <h3 className="font-bold text-on-surface">Belum ada Router terdaftar</h3>
-            <p className="text-xs text-on-surface-variant mt-1 mb-4">Daftarkan router MikroTik Anda terlebih dahulu untuk memulai.</p>
-            <a 
-              href="/servers" 
-              className="inline-flex items-center justify-center px-4 py-2.5 bg-primary text-on-primary rounded-xl font-medium text-sm hover:bg-primary/95 transition-colors"
-            >
-              Tambah Router
+          <Card className="max-w-sm mx-auto text-center">
+            <div className="w-12 h-12 rounded-full border border-hairline flex items-center justify-center mx-auto mb-4 text-mute">
+              <ServerIcon className="w-5 h-5" strokeWidth={1.5} />
+            </div>
+            <h3 className="font-semibold text-ink">Belum ada router</h3>
+            <p className="text-sm text-body mt-1 mb-5">Daftarkan router MikroTik dulu buat mulai.</p>
+            <a href="/servers" className="inline-block">
+              <Button>Tambah Router</Button>
             </a>
-          </div>
+          </Card>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl w-full">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {servers.map((server) => {
               const isOnline = server.lastStatus === "ONLINE";
               return (
                 <button
                   key={server.id}
                   onClick={() => setActiveServerId(server.id)}
-                  className="bg-surface-container-lowest p-5 rounded-2xl border border-outline-variant hover:border-primary text-left transition-all hover:shadow-md flex flex-col justify-between group"
+                  className="text-left rounded-[12px] border border-hairline bg-canvas p-5 hover:border-hairline-strong transition-colors flex flex-col justify-between group"
                 >
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                        isOnline 
-                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400" 
-                          : "bg-error-container text-on-error-container"
-                      }`}>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-hairline bg-surface-soft text-xs font-medium text-charcoal">
+                        <StatusDot tone={isOnline ? "ok" : "danger"} />
                         {isOnline ? "Online" : "Offline"}
                       </span>
-                      <Radio className="w-5 h-5 text-on-surface-variant group-hover:text-primary transition-colors" />
                     </div>
-                    <h3 className="font-bold text-on-surface text-base group-hover:text-primary transition-colors">{server.name}</h3>
-                    <p className="text-xs text-on-surface-variant font-mono mt-1">{server.host}:{server.port}</p>
+                    <h3 className="font-semibold text-ink">{server.name}</h3>
+                    <p className="text-xs text-mute font-mono mt-1">
+                      {server.host}:{server.port}
+                    </p>
                   </div>
-                  <div className="mt-4 pt-3 border-t border-outline-variant/30 flex items-center justify-between text-xs text-primary font-semibold">
-                    <span>Hubungkan Router</span>
-                    <Play className="w-3.5 h-3.5 transform group-hover:translate-x-1 transition-transform" />
+                  <div className="mt-4 pt-3 border-t border-hairline flex items-center justify-between text-sm text-ink font-medium">
+                    <span>Hubungkan</span>
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
                   </div>
                 </button>
               );
@@ -260,343 +269,186 @@ export default function DashboardPage() {
     );
   }
 
+  const isLive = activeServer?.lastStatus === "ONLINE" && !error;
+
   return (
-    <div className="space-y-6 relative">
-      {/* Header Panel */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/60 shadow-sm">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-on-surface">Overview: {activeServer?.name}</h1>
-            {activeServer?.lastStatus === "ONLINE" && !error ? (
-              <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-bold rounded-full">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span>Live Terhubung</span>
-              </div>
-            ) : (
-              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-error-container text-on-error-container text-xs font-semibold rounded-full">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>Terputus</span>
-              </span>
-            )}
+    <div className="space-y-6">
+      {/* Header */}
+      <PageHeader
+        title={activeServer?.name ?? "Dasbor"}
+        description={`${activeServer?.host}:${activeServer?.port} · RouterOS ${resources?.version || "-"}`}
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Status live */}
+            <span className="inline-flex items-center gap-1.5 px-3 h-9 rounded-full border border-hairline bg-canvas text-xs font-medium text-charcoal">
+              <StatusDot tone={isLive ? "ok" : "danger"} pulse={isLive} />
+              {isLive ? "Terhubung" : "Terputus"}
+            </span>
+
+            {/* Auto-refresh */}
+            <div className="inline-flex items-center gap-2 h-9 px-3 rounded-full bg-surface-soft border border-hairline">
+              <Clock className="w-3.5 h-3.5 text-mute" />
+              <select
+                value={autoRefreshInterval}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setAutoRefreshInterval(val);
+                  setCountdown(val);
+                }}
+                className="bg-transparent text-xs text-ink font-medium focus:outline-none cursor-pointer"
+              >
+                <option value={0}>Nonaktif</option>
+                <option value={3}>3 detik</option>
+                <option value={10}>10 detik</option>
+                <option value={30}>30 detik</option>
+                <option value={60}>60 detik</option>
+              </select>
+            </div>
           </div>
-          <p className="text-xs text-on-surface-variant font-mono mt-1">Host: {activeServer?.host}:{activeServer?.port} | Versi ROS: {resources?.version || "-"}</p>
-        </div>
+        }
+      />
 
-        {/* Toolbar Controls */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Auto Refresh Selector */}
-          <div className="flex items-center gap-2 bg-surface-variant/40 px-3 py-1.5 rounded-xl border border-outline-variant/40">
-            <Clock className="w-4 h-4 text-on-surface-variant" />
-            <span className="text-xs text-on-surface-variant font-medium">Auto-Refresh:</span>
-            <select
-              value={autoRefreshInterval}
-              onChange={(e) => {
-                const val = parseInt(e.target.value, 10);
-                setAutoRefreshInterval(val);
-                setCountdown(val);
-              }}
-              className="bg-transparent text-xs text-on-surface font-semibold focus:outline-none cursor-pointer"
-            >
-              <option value={0}>Nonaktif</option>
-              <option value={3}>3 Detik</option>
-              <option value={10}>10 Detik</option>
-              <option value={30}>30 Detik</option>
-              <option value={60}>60 Detik</option>
-            </select>
-          </div>
-
-          {/* Manual Refresh Button */}
-          <button
-            onClick={handleManualRefresh}
-            disabled={isLoading || isSilentLoading}
-            className={`p-2.5 bg-surface-variant hover:bg-outline-variant/40 border border-outline-variant text-on-surface-variant rounded-xl transition-all duration-300 flex items-center gap-2 text-xs font-semibold ${
-              isLoading || isSilentLoading ? "opacity-60 cursor-not-allowed" : "hover:scale-[1.02]"
-            }`}
-            title="Perbarui data sekarang secara manual"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading || isSilentLoading ? "animate-spin text-primary" : ""}`} />
-            <span>Perbarui</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main Error Banner */}
+      {/* Error banner */}
       {error && (
-        <div className="bg-error-container text-on-error-container p-5 rounded-2xl border border-error/20 shadow-sm flex items-start gap-4 animate-shake">
-          <AlertTriangle className="w-6 h-6 shrink-0 mt-0.5 text-error" />
+        <Card className="flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-danger" strokeWidth={1.75} />
           <div>
-            <h3 className="font-bold text-base">Gagal Memantau Router</h3>
-            <p className="text-sm mt-1">{error}</p>
-            <button
-              onClick={handleManualRefresh}
-              className="mt-3 px-4 py-1.5 bg-error text-on-error rounded-xl text-xs font-semibold hover:bg-error/95 transition-colors inline-flex items-center gap-1.5"
-            >
-              <RefreshCw className="w-3.5 h-3.5" /> Coba Hubungkan Ulang
-            </button>
+            <h3 className="font-semibold text-ink">Gagal memantau router</h3>
+            <p className="text-sm text-body mt-1">{error}</p>
+            <Button variant="secondary" size="sm" className="mt-3" onClick={handleManualRefresh}>
+              <RefreshCw className="w-3.5 h-3.5" /> Coba hubungkan ulang
+            </Button>
           </div>
-        </div>
+        </Card>
       )}
 
-      {/* Loading Skeleton & Placeholder */}
+      {/* Loading skeleton */}
       {isLoading && !isSilentLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="bg-surface-container-lowest h-28 rounded-2xl border border-outline-variant"></div>
+            <div key={i} className="h-28 rounded-[12px] border border-hairline bg-surface-soft animate-pulse" />
           ))}
-          <div className="lg:col-span-4 bg-surface-container-lowest h-64 rounded-2xl border border-outline-variant mt-4"></div>
+          <div className="lg:col-span-4 h-64 rounded-[12px] border border-hairline bg-surface-soft animate-pulse" />
         </div>
       ) : (
         <>
-          {/* Top Monitoring Grid moved to bottom */}
-
-          {/* Overview Metric Row */}
+          {/* Metrik utama */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Metric 1: User Aktif */}
-            <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/60 shadow-sm flex items-center justify-between hover:shadow-md transition-all duration-300">
-              <div>
-                <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">User Aktif</p>
-                <h3 className="text-3xl font-extrabold text-on-surface mt-1.5">
-                  {error ? "-" : activeUsers.length}
-                </h3>
-                <span className="text-xs text-emerald-600 font-semibold flex items-center gap-0.5 mt-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                  Sesi Aktif
-                </span>
-              </div>
-              <div className="w-12 h-12 bg-primary-container/60 text-primary rounded-2xl flex items-center justify-center shadow-inner">
-                <Users className="w-6 h-6" />
-              </div>
-            </div>
-
-            {/* Metric 2: Voucher Terbuat */}
-            <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/60 shadow-sm flex items-center justify-between hover:shadow-md transition-all duration-300">
-              <div>
-                <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Voucher Terbuat</p>
-                <h3 className="text-3xl font-extrabold text-on-surface mt-1.5">
-                  {error ? "-" : vouchersCount}
-                </h3>
-                <span className="text-xs text-on-surface-variant mt-1 block">Total di database</span>
-              </div>
-              <div className="w-12 h-12 bg-secondary-container/60 text-secondary rounded-2xl flex items-center justify-center shadow-inner">
-                <Ticket className="w-6 h-6" />
-              </div>
-            </div>
-
-            {/* Metric 3: Uptime Router */}
-            <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/60 shadow-sm flex items-center justify-between hover:shadow-md transition-all duration-300">
-              <div>
-                <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Router Uptime</p>
-                <h3 className="text-lg font-bold text-on-surface mt-3 truncate max-w-[160px]" title={resources?.uptime}>
-                  {error || !resources ? "-" : resources.uptime}
-                </h3>
-                <span className="text-xs text-on-surface-variant mt-1.5 block">Waktu aktif router</span>
-              </div>
-              <div className="w-12 h-12 bg-tertiary-container/40 text-on-tertiary-container rounded-2xl flex items-center justify-center shadow-inner">
-                <Wifi className="w-6 h-6 text-orange-700" />
-              </div>
-            </div>
-
-            {/* Metric 4: Beban CPU */}
-            <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/60 shadow-sm flex items-center justify-between hover:shadow-md transition-all duration-300">
-              <div>
-                <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Beban CPU</p>
-                <h3 className="text-3xl font-extrabold text-on-surface mt-1.5">
-                  {error || !resources ? "-" : `${resources.cpuLoad}%`}
-                </h3>
-                <span className={`text-xs font-bold block mt-1 ${
-                  (resources?.cpuLoad || 0) > 80 ? "text-error" : (resources?.cpuLoad || 0) > 50 ? "text-amber-600" : "text-emerald-600"
-                }`}>
-                  {error || !resources ? "-" : resources.cpuLoad > 80 ? "Beban Tinggi" : resources.cpuLoad > 50 ? "Beban Sedang" : "Normal"}
-                </span>
-              </div>
-              <div className="w-12 h-12 bg-surface-variant text-on-surface-variant rounded-2xl flex items-center justify-center shadow-inner">
-                <Cpu className="w-6 h-6" />
-              </div>
-            </div>
+            <MetricCard
+              icon={Users}
+              label="User Aktif"
+              value={error ? "-" : String(activeUsers.length)}
+              hint="Sesi aktif sekarang"
+            />
+            <MetricCard
+              icon={Ticket}
+              label="Voucher"
+              value={error ? "-" : String(vouchersCount)}
+              hint="Total di database"
+            />
+            <MetricCard
+              icon={Wifi}
+              label="Uptime Router"
+              value={error || !resources ? "-" : formatUptime(resources.uptime)}
+              hint="Waktu aktif router"
+              small
+            />
+            <MetricCard
+              icon={Network}
+              label="Interface Aktif"
+              value={error ? "-" : `${traffic.filter((i) => i.running).length}/${traffic.length}`}
+              hint="Interface berjalan"
+            />
           </div>
 
-          {/* System Performance & Hardware Resources Row */}
+          {/* Performa & hardware */}
           {!error && resources && (
-            <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant/60 shadow-sm space-y-6">
-              <h2 className="text-lg font-bold text-on-surface">
-                Performa Router & Hardware
-              </h2>
+            <Card padded={false} className="p-6 space-y-6">
+              <h2 className="font-display text-lg font-semibold text-ink">Performa Router &amp; Hardware</h2>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* CPU Progress Card */}
-                <div className="bg-surface-variant/20 p-5 rounded-2xl border border-outline-variant/35 flex flex-col justify-between">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="font-semibold text-sm text-on-surface flex items-center gap-2">
-                      <Cpu className="w-4.5 h-4.5 text-primary" /> Penggunaan CPU
-                    </span>
-                    <span className="text-xs text-on-surface-variant font-mono">{resources.cpuCount} Core</span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-end">
-                      <span className="text-2xl font-extrabold text-on-surface">{resources.cpuLoad}%</span>
-                      <span className="text-xs text-on-surface-variant">Beban kerja</span>
-                    </div>
-                    <div className="h-2.5 w-full bg-surface-variant rounded-full overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          resources.cpuLoad > 85 
-                            ? "bg-error" 
-                            : resources.cpuLoad > 60 
-                            ? "bg-amber-500" 
-                            : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${resources.cpuLoad}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* RAM Progress Card */}
-                <div className="bg-surface-variant/20 p-5 rounded-2xl border border-outline-variant/35 flex flex-col justify-between">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="font-semibold text-sm text-on-surface flex items-center gap-2">
-                      <Database className="w-4.5 h-4.5 text-primary" /> Memori RAM
-                    </span>
-                    <span className="text-xs text-on-surface-variant font-mono">
-                      {formatBytes(resources.totalMemory)}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-end">
-                      <span className="text-2xl font-extrabold text-on-surface">{memoryUsagePercent}%</span>
-                      <span className="text-xs text-on-surface-variant font-medium">
-                        Terpakai {formatBytes(resources.totalMemory - resources.freeMemory)}
-                      </span>
-                    </div>
-                    <div className="h-2.5 w-full bg-surface-variant rounded-full overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          memoryUsagePercent > 85 
-                            ? "bg-error" 
-                            : memoryUsagePercent > 60 
-                            ? "bg-amber-500" 
-                            : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${memoryUsagePercent}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* HDD Progress Card */}
-                <div className="bg-surface-variant/20 p-5 rounded-2xl border border-outline-variant/35 flex flex-col justify-between">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="font-semibold text-sm text-on-surface flex items-center gap-2">
-                      <HardDrive className="w-4.5 h-4.5 text-primary" /> Penyimpanan HDD
-                    </span>
-                    <span className="text-xs text-on-surface-variant font-mono">
-                      {formatBytes(resources.totalHddSpace)}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-end">
-                      <span className="text-2xl font-extrabold text-on-surface">{hddUsagePercent}%</span>
-                      <span className="text-xs text-on-surface-variant font-medium">
-                        Sisa {formatBytes(resources.freeHddSpace)}
-                      </span>
-                    </div>
-                    <div className="h-2.5 w-full bg-surface-variant rounded-full overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          hddUsagePercent > 85 
-                            ? "bg-error" 
-                            : hddUsagePercent > 60 
-                            ? "bg-amber-500" 
-                            : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${hddUsagePercent}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <UsageBar
+                  icon={Cpu}
+                  title="Penggunaan CPU"
+                  meta={`${resources.cpuCount} Core`}
+                  percent={resources.cpuLoad}
+                  sub="Beban kerja"
+                />
+                <UsageBar
+                  icon={Database}
+                  title="Memori RAM"
+                  meta={formatBytes(resources.totalMemory)}
+                  percent={memoryUsagePercent}
+                  sub={`Terpakai ${formatBytes(resources.totalMemory - resources.freeMemory)}`}
+                />
+                <UsageBar
+                  icon={HardDrive}
+                  title="Penyimpanan HDD"
+                  meta={formatBytes(resources.totalHddSpace)}
+                  percent={hddUsagePercent}
+                  sub={`Sisa ${formatBytes(resources.freeHddSpace)}`}
+                />
               </div>
 
-              {/* Hardware Spec Badges */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-outline-variant/20">
-                <div className="flex flex-col bg-surface-variant/10 px-4 py-3 rounded-xl border border-outline-variant/20">
-                  <span className="text-xs text-on-surface-variant">Tipe Board</span>
-                  <span className="text-sm font-bold text-on-surface mt-0.5">{resources.boardName}</span>
-                </div>
-                <div className="flex flex-col bg-surface-variant/10 px-4 py-3 rounded-xl border border-outline-variant/20">
-                  <span className="text-xs text-on-surface-variant">Arsitektur</span>
-                  <span className="text-sm font-bold text-on-surface mt-0.5">{resources.architectureName}</span>
-                </div>
-                <div className="flex flex-col bg-surface-variant/10 px-4 py-3 rounded-xl border border-outline-variant/20">
-                  <span className="text-xs text-on-surface-variant">Uptime Router</span>
-                  <span className="text-sm font-bold text-on-surface mt-0.5 truncate" title={resources.uptime}>
-                    {formatUptime(resources.uptime)}
-                  </span>
-                </div>
-                <div className="flex flex-col bg-surface-variant/10 px-4 py-3 rounded-xl border border-outline-variant/20">
-                  <span className="text-xs text-on-surface-variant">Versi MikroTik</span>
-                  <span className="text-sm font-bold text-on-surface mt-0.5 font-mono">{resources.version}</span>
-                </div>
+              {/* Spec badges — info hardware unik saja (Uptime & Versi sudah di
+                  kartu metrik / subjudul header, tidak diduplikasi di sini). */}
+              <div className="grid grid-cols-2 gap-3 pt-5 border-t border-hairline">
+                <SpecBadge label="Tipe Board" value={resources.boardName} />
+                <SpecBadge label="Arsitektur" value={resources.architectureName} />
               </div>
-            </div>
+            </Card>
           )}
 
-          {/* Top Monitoring Grid (Moved to bottom) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
-            {/* Traffic Monitor Section */}
-            <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-sm overflow-hidden flex flex-col h-[400px]">
-              <div className="p-6 border-b border-outline-variant/60 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-                <div>
-                  <h2 className="text-lg font-bold text-on-surface">
-                    Traffic Jaringan
-                  </h2>
-                  <p className="text-xs text-on-surface-variant mt-1">Pantau bandwidth RX/TX secara real-time</p>
-                </div>
+          {/* Traffic + Pengguna aktif */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {/* Traffic */}
+            <Card padded={false} className="overflow-hidden flex flex-col h-100">
+              <div className="p-5 border-b border-hairline shrink-0">
+                <h2 className="font-display text-lg font-semibold text-ink">Traffic Jaringan</h2>
+                <p className="text-xs text-body mt-0.5">Bandwidth RX/TX real-time</p>
               </div>
 
-              <div className="flex-1 overflow-auto bg-surface-container-lowest">
+              <div className="flex-1 overflow-auto">
                 {error ? (
-                  <div className="p-12 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
-                    <AlertTriangle className="w-12 h-12 text-error mb-3" />
-                    <p className="font-semibold">Data traffic tidak tersedia</p>
-                  </div>
+                  <EmptyState icon={AlertTriangle} title="Data traffic tidak tersedia" />
                 ) : traffic.length === 0 ? (
-                  <div className="p-16 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
-                    <Activity className="w-14 h-14 text-outline-variant mb-4 animate-pulse" />
-                    <h3 className="font-bold text-on-surface text-base">Sedang Memuat...</h3>
-                  </div>
+                  <EmptyState icon={Activity} title="Memuat…" />
                 ) : (
                   <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-surface-variant/90 backdrop-blur text-on-surface-variant font-semibold text-xs border-b border-outline-variant/60 select-none z-10">
+                    <thead className="sticky top-0 bg-surface-soft text-mute font-medium text-xs border-b border-hairline select-none z-10">
                       <tr>
-                        <th className="p-3 pl-6">Interface</th>
+                        <th className="p-3 pl-5">Interface</th>
                         <th className="p-3">Status</th>
-                        <th className="p-3 flex items-center gap-1.5"><ArrowDown className="w-3.5 h-3.5 text-emerald-600" /> RX</th>
-                        <th className="p-3"><span className="flex items-center gap-1.5"><ArrowUp className="w-3.5 h-3.5 text-primary" /> TX</span></th>
+                        <th className="p-3">
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowDown className="w-3.5 h-3.5" /> RX
+                          </span>
+                        </th>
+                        <th className="p-3">
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowUp className="w-3.5 h-3.5" /> TX
+                          </span>
+                        </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-outline-variant/30 text-sm text-on-surface">
+                    <tbody className="divide-y divide-hairline text-sm text-ink">
                       {traffic.map((iface) => (
-                        <tr key={iface.id} className="hover:bg-primary-container/10 transition-colors group">
-                          <td className="p-3 pl-6 font-bold text-on-surface flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full shrink-0 ${iface.running ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-outline-variant'}`}></span>
-                            <span className="truncate max-w-[100px] sm:max-w-none">{iface.name}</span>
+                        <tr key={iface.id} className="hover:bg-surface-soft transition-colors">
+                          <td className="p-3 pl-5 font-medium text-ink">
+                            <span className="inline-flex items-center gap-2">
+                              <StatusDot tone={iface.running ? "ok" : "neutral"} />
+                              <span className="truncate max-w-25 sm:max-w-none">{iface.name}</span>
+                            </span>
                           </td>
                           <td className="p-3">
-                            {iface.disabled ? (
-                              <span className="px-2 py-0.5 bg-error-container text-on-error-container text-[10px] font-bold rounded uppercase">Disabled</span>
-                            ) : iface.running ? (
-                              <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold rounded uppercase">Running</span>
-                            ) : (
-                              <span className="px-2 py-0.5 bg-surface-variant text-on-surface-variant text-[10px] font-bold rounded uppercase">Down</span>
-                            )}
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-hairline bg-surface-soft text-[11px] font-medium text-charcoal">
+                              {iface.disabled ? "Disabled" : iface.running ? "Running" : "Down"}
+                            </span>
                           </td>
-                          <td className="p-3 font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                          <td className="p-3 font-mono text-xs text-charcoal whitespace-nowrap">
                             {formatBytes(iface.rxByte)}
                           </td>
-                          <td className="p-3 font-mono text-xs font-semibold text-primary whitespace-nowrap">
+                          <td className="p-3 font-mono text-xs text-charcoal whitespace-nowrap">
                             {formatBytes(iface.txByte)}
                           </td>
                         </tr>
@@ -605,75 +457,64 @@ export default function DashboardPage() {
                   </table>
                 )}
               </div>
-            </div>
+            </Card>
 
-            {/* Active Users Table Section */}
-            <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-sm overflow-hidden flex flex-col h-[400px]">
-              <div className="p-6 border-b border-outline-variant/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
+            {/* Pengguna aktif */}
+            <Card padded={false} className="overflow-hidden flex flex-col h-100">
+              <div className="p-5 border-b border-hairline flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
                 <div>
-                  <h2 className="text-lg font-bold text-on-surface">
-                    Pengguna Aktif
-                  </h2>
-                  <p className="text-xs text-on-surface-variant mt-1">Daftar pelanggan terhubung saat ini</p>
+                  <h2 className="font-display text-lg font-semibold text-ink">Pengguna Aktif</h2>
+                  <p className="text-xs text-body mt-0.5">Pelanggan terhubung saat ini</p>
                 </div>
                 {!error && activeUsers.length > 0 && (
-                  <div className="relative max-w-[180px] w-full shrink-0">
-                    <Search className="w-4 h-4 text-on-surface-variant absolute left-3 top-2 pointer-events-none" />
+                  <div className="relative max-w-45 w-full shrink-0">
+                    <Search className="w-4 h-4 text-mute absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
-                      placeholder="Cari user..."
+                      placeholder="Cari user…"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full text-xs bg-surface-variant/45 text-on-surface placeholder-on-surface-variant rounded-xl pl-9 pr-3 py-1.5 border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface-container-lowest transition-all"
+                      className="w-full h-9 text-xs bg-surface-soft text-ink placeholder:text-mute rounded-full pl-9 pr-3 border border-hairline outline-none focus:border-ink focus:ring-2 focus:ring-[rgba(59,130,246,0.5)] transition-colors"
                     />
                   </div>
                 )}
               </div>
 
-              <div className="flex-1 overflow-auto bg-surface-container-lowest">
+              <div className="flex-1 overflow-auto">
                 {error ? (
-                  <div className="p-12 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
-                    <AlertTriangle className="w-12 h-12 text-error mb-3" />
-                    <p className="font-semibold">Data pengguna tidak tersedia</p>
-                  </div>
+                  <EmptyState icon={AlertTriangle} title="Data pengguna tidak tersedia" />
                 ) : activeUsers.length === 0 ? (
-                  <div className="p-16 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
-                    <Users className="w-14 h-14 text-outline-variant mb-4 animate-bounce" />
-                    <h3 className="font-bold text-on-surface text-base">Belum Ada Sesi Pengguna</h3>
-                  </div>
+                  <EmptyState icon={Users} title="Belum ada sesi pengguna" />
                 ) : filteredUsers.length === 0 ? (
-                  <div className="p-16 text-center text-on-surface-variant h-full flex flex-col items-center justify-center">
-                    <Search className="w-12 h-12 text-outline-variant mb-3" />
-                    <h3 className="font-bold text-on-surface text-base">Tidak ada pencarian cocok</h3>
-                  </div>
+                  <EmptyState icon={Search} title="Tidak ada yang cocok" />
                 ) : (
                   <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-surface-variant/90 backdrop-blur text-on-surface-variant font-semibold text-xs border-b border-outline-variant/60 select-none z-10">
+                    <thead className="sticky top-0 bg-surface-soft text-mute font-medium text-xs border-b border-hairline select-none z-10">
                       <tr>
-                        <th className="p-3 pl-6">Username</th>
+                        <th className="p-3 pl-5">Username</th>
                         <th className="p-3">IP Address</th>
                         <th className="p-3">Uptime</th>
-                        <th className="p-3 pr-6">Sisa Waktu</th>
+                        <th className="p-3 pr-5">Sisa Waktu</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-outline-variant/30 text-sm text-on-surface">
+                    <tbody className="divide-y divide-hairline text-sm text-ink">
                       {filteredUsers.map((user) => (
-                        <tr key={user.id} className="hover:bg-primary-container/10 transition-colors group">
-                          <td className="p-3 pl-6 font-bold text-primary flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-                            <span className="truncate max-w-[100px] sm:max-w-none">{user.username}</span>
+                        <tr key={user.id} className="hover:bg-surface-soft transition-colors">
+                          <td className="p-3 pl-5 font-medium text-ink">
+                            <span className="inline-flex items-center gap-2">
+                              <StatusDot tone="ok" />
+                              <span className="truncate max-w-25 sm:max-w-none">{user.username}</span>
+                            </span>
                           </td>
-                          <td className="p-3 font-mono text-xs whitespace-nowrap">{user.ipAddress}</td>
-                          <td className="p-3 text-xs font-medium text-on-surface whitespace-nowrap">
-                            {user.uptime}
-                          </td>
-                          <td className="p-3 pr-6 whitespace-nowrap">
+                          <td className="p-3 font-mono text-xs text-charcoal whitespace-nowrap">{user.ipAddress}</td>
+                          <td className="p-3 text-xs text-charcoal whitespace-nowrap">{user.uptime}</td>
+                          <td className="p-3 pr-5 whitespace-nowrap">
                             {user.sessionTimeLeft ? (
-                              <span className="px-2 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 font-bold text-[10px] rounded border border-amber-500/30">
+                              <span className="inline-block px-2 py-0.5 rounded-full border border-hairline bg-surface-soft text-charcoal text-[11px] font-medium">
                                 {user.sessionTimeLeft}
                               </span>
                             ) : (
-                              <span className="text-on-surface-variant text-[10px] font-semibold italic">Unlimited</span>
+                              <span className="text-mute text-xs">Tanpa batas</span>
                             )}
                           </td>
                         </tr>
@@ -682,23 +523,106 @@ export default function DashboardPage() {
                   </table>
                 )}
               </div>
-              
-              {/* Table Footer */}
+
+              {/* Footer */}
               {!error && activeUsers.length > 0 && (
-                <div className="p-3 border-t border-outline-variant/40 bg-surface-variant/20 flex items-center justify-between text-xs text-on-surface-variant select-none shrink-0">
-                  <span className="font-medium text-[11px]">Menampilkan {filteredUsers.length} pengguna</span>
+                <div className="p-3 border-t border-hairline bg-surface-soft flex items-center justify-between text-xs text-mute select-none shrink-0">
+                  <span>Menampilkan {filteredUsers.length} pengguna</span>
                   {isSilentLoading && (
-                    <span className="text-primary font-semibold flex items-center gap-1.5 animate-pulse text-[11px]">
-                      <RefreshCw className="w-3 h-3 animate-spin" /> Memperbarui...
+                    <span className="text-charcoal inline-flex items-center gap-1.5">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Memperbarui…
                     </span>
                   )}
                 </div>
               )}
-            </div>
+            </Card>
           </div>
-
         </>
       )}
+    </div>
+  );
+}
+
+// ── Sub-komponen ─────────────────────────────────────────────────────────────
+
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  small,
+}: {
+  icon: typeof Users;
+  label: string;
+  value: string;
+  hint: string;
+  small?: boolean;
+}) {
+  return (
+    <Card className="flex items-start justify-between">
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-mute uppercase tracking-wide">{label}</p>
+        <p
+          className={`font-display font-semibold text-ink mt-2 truncate ${
+            small ? "text-xl" : "text-3xl"
+          }`}
+        >
+          {value}
+        </p>
+        <p className="text-xs text-body mt-1">{hint}</p>
+      </div>
+      <div className="w-10 h-10 rounded-full border border-hairline flex items-center justify-center text-mute shrink-0">
+        <Icon className="w-5 h-5" strokeWidth={1.75} />
+      </div>
+    </Card>
+  );
+}
+
+function UsageBar({
+  icon: Icon,
+  title,
+  meta,
+  percent,
+  sub,
+}: {
+  icon: typeof Cpu;
+  title: string;
+  meta: string;
+  percent: number;
+  sub: string;
+}) {
+  return (
+    <div className="rounded-[12px] border border-hairline p-5 flex flex-col justify-between">
+      <div className="flex items-center justify-between mb-4">
+        <span className="font-medium text-sm text-ink inline-flex items-center gap-2">
+          <Icon className="w-4 h-4 text-charcoal" strokeWidth={1.75} /> {title}
+        </span>
+        <span className="text-xs text-mute font-mono">{meta}</span>
+      </div>
+      <div className="space-y-2">
+        <div className="flex justify-between items-end">
+          <span className="font-display text-2xl font-semibold text-ink">{percent}%</span>
+          <span className="text-xs text-body">{sub}</span>
+        </div>
+        {/* Bar hitam (ink) — tanpa warna semantik, sesuai Ollama */}
+        <div className="h-2 w-full bg-surface-soft rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full bg-ink transition-all duration-500"
+            style={{ width: `${Math.min(percent, 100)}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SpecBadge({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex flex-col rounded-[12px] border border-hairline px-4 py-3">
+      <span className="text-xs text-mute">{label}</span>
+      <span className={`text-sm font-medium text-ink mt-0.5 truncate ${mono ? "font-mono" : ""}`} title={value}>
+        {value}
+      </span>
     </div>
   );
 }

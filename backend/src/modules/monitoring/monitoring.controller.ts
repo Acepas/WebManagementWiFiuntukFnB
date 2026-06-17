@@ -15,6 +15,20 @@ import {
 export class MonitoringController {
   constructor(private readonly monitoringService: MonitoringService) {}
 
+  @Get('snapshot/:serverId')
+  @ApiOperation({
+    summary:
+      'Snapshot monitoring (active users + resource + traffic) dalam SATU koneksi',
+    description:
+      'Optimasi beban router: 1 login + 3 perintah, menggantikan 3 endpoint terpisah. Dipakai auto-refresh dashboard.',
+  })
+  @ApiResponse({ status: 200, description: 'Snapshot monitoring berhasil diambil.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Router tidak ditemukan.' })
+  async getSnapshot(@Param('serverId') serverId: string) {
+    return this.monitoringService.getSnapshot(serverId);
+  }
+
   @Get('active/:serverId')
   @ApiOperation({
     summary:

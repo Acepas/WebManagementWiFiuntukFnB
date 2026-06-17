@@ -47,10 +47,11 @@ model MikrotikServer {
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
-  profiles  HotspotProfile[]
-  vouchers  Voucher[]
-  logs      ActivityLog[]
-  aiReports AiReport[]
+  profiles   HotspotProfile[]
+  vouchers   Voucher[]
+  logs       ActivityLog[]
+  aiReports  AiReport[]
+  posApiKeys PosApiKey[]
 
   @@map("mikrotik_servers")
 }
@@ -206,8 +207,54 @@ enum LogAction {
   AI_ANALYSIS_STARTED
   AI_ANALYSIS_COMPLETED
   AI_ANALYSIS_FAILED
+  AI_ANALYSIS_DELETED
 
   // Error
   ROUTER_CONNECTION_FAILED
   SYSTEM_ERROR
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POS INTEGRATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PosApiKey {
+  id         String    @id @default(cuid())
+  label      String // nama outlet / identitas POS
+  serverId   String // key terikat ke 1 server (per-outlet) — isolasi antar outlet
+  keyHash    String    @unique // sha256(key mentah) — deterministik utk lookup cepat
+  prefix     String // 8-12 char awal utk tampilan ter-mask
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  server       MikrotikServer   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  transactions PosTransaction[]
+
+  @@index([serverId])
+  @@map("pos_api_keys")
+}
+
+model PosTransaction {
+  id            String      @id @default(cuid())
+  transactionId String      @unique // dari POS — kunci idempotensi
+  posApiKeyId   String?
+  serverId      String
+  profileId     String
+  voucherId     String?
+  status        PosTxStatus @default(SUCCESS)
+  errorMessage  String?
+  outletName    String?
+  customerName  String?
+  createdAt     DateTime    @default(now())
+
+  posApiKey PosApiKey? @relation(fields: [posApiKeyId], references: [id])
+
+  @@index([serverId])
+  @@map("pos_transactions")
+}
+
+enum PosTxStatus {
+  SUCCESS
+  FAILED
 }

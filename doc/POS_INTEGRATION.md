@@ -1,10 +1,13 @@
-# POS_INTEGRATION.md — Spesifikasi Integrasi POS
+# POS_INTEGRATION.md — Spesifikasi & Referensi As-Built Integrasi POS
 
 **Proyek:** Web Management WiFi untuk FnB (P5)
-**Status:** Blueprint / spesifikasi untuk **diimplementasikan rekan tim**. Modul `pos` belum ada di kode.
+**Status:** ✅ **SUDAH DIIMPLEMENTASIKAN & dimigrasikan** ke backend utama. Modul ada di
+`backend/src/modules/pos/` (10 file). Migrasi DB `add_pos_integration` diterapkan. Build `nest build` 0 error.
+Endpoint juga terdokumentasi live di Swagger `/api/docs` (tag **POS**, security scheme `pos-api-key`).
 
-Dokumen ini menjelaskan **2 endpoint POS** + sistem **API key** + **skema DB** + alur + contoh, agar
-rekan tim bisa langsung coding tanpa ambiguitas.
+Dokumen ini = spesifikasi + referensi as-built. Diverifikasi konsisten dengan kode nyata.
+
+> **Catatan port:** backend utama berjalan di **`:4100`** (`http://localhost:4100/api`). Contoh cURL di bawah memakai port itu.
 
 ---
 
@@ -117,8 +120,9 @@ Headers:
 2. Validasi profil ada & milik server tsb → 404 bila tidak.
 3. **Idempotensi:** cek `PosTransaction` by `transactionId`.
    - Sudah ada → ambil voucher lamanya, **kembalikan response yang sama (200)**, JANGAN buat baru.
-4. Generate username 6 digit angka unik (reuse `generateRandomCode`, panjang dari env
-   `POS_VOUCHER_CODE_LENGTH` default `6`). Password = username (atau generate terpisah).
+4. Generate username 6 digit **angka** unik (`generateNumericCode` di `pos.util.ts` — numerik murni
+   sesuai prinsip §1; bukan `generateRandomCode` voucher yang alfanumerik). Panjang dari env
+   `POS_VOUCHER_CODE_LENGTH` default `6`. Password = username.
 5. **`mikrotikService.createHotspotUser(serverId, username, password, profile.name)`**.
    - Gagal (router offline/timeout) → catat `PosTransaction` status `FAILED` → balas **502** dengan
      pesan jelas. **Jangan** simpan voucher sukses (POS bisa retry dgn transactionId sama).
@@ -218,18 +222,21 @@ enum PosTxStatus {
 ## 7. Struktur Modul yang Disarankan
 
 ```
-backend/src/modules/pos/
+backend/src/modules/pos/                  # ← AS-BUILT (10 file)
 ├── pos.module.ts
-├── pos.controller.ts          # GET /pos/v1/profiles, POST /pos/v1/trigger-voucher
-├── pos.service.ts             # logika trigger + idempotensi
+├── pos.controller.ts          # GET /pos/v1/profiles, POST /pos/v1/trigger-voucher (x-api-key)
+├── pos.service.ts             # logika trigger + idempotensi + listProfiles
 ├── pos-keys.controller.ts     # admin (JWT): CRUD api key
 ├── pos-keys.service.ts        # generate/hash/revoke key
-├── guards/pos-api-key.guard.ts# validasi x-api-key
+├── pos.util.ts                # hashApiKey / generatePosApiKey / maskApiKey / generateNumericCode
+├── guards/
+│   └── pos-api-key.guard.ts   # validasi x-api-key
 └── dto/
     ├── trigger-voucher.dto.ts
-    └── create-pos-key.dto.ts
+    ├── create-pos-key.dto.ts
+    └── update-pos-key.dto.ts  # { isActive } untuk PATCH
 ```
-Daftarkan `PosModule` di `app.module.ts`.
+`PosModule` sudah terdaftar di `app.module.ts`. Swagger `pos-api-key` (`x-api-key` header) didaftarkan di `main.ts`.
 
 ---
 
@@ -257,20 +264,25 @@ curl -X POST http://localhost:4100/api/pos/v1/trigger-voucher \
 
 ---
 
-## 9. Checklist Implementasi (untuk rekan tim)
+## 9. Checklist Implementasi — ✅ SELESAI
 
-- [ ] Tambah model `PosApiKey`, `PosTransaction`, enum `PosTxStatus` ke `schema.prisma`
-- [ ] `npx prisma migrate dev --name add_pos`
-- [ ] `pos-keys` service+controller (admin JWT): generate key (random + sha256), list (mask), revoke
-- [ ] `PosApiKeyGuard`: validasi `x-api-key` → hash → lookup aktif → update `lastUsedAt`
-- [ ] `GET /pos/v1/profiles`: list server + profil (map field aman)
-- [ ] `POST /pos/v1/trigger-voucher`: validasi → idempotensi → generate kode → `createHotspotUser` →
+- [x] Tambah model `PosApiKey`, `PosTransaction`, enum `PosTxStatus` ke `schema.prisma`
+- [x] `npx prisma migrate dev` → migrasi `20260612230120_add_pos_integration` (CREATE 2 tabel, no drop)
+- [x] `pos-keys` service+controller (admin JWT): generate key (random + sha256), list (mask), aktif/nonaktif, revoke
+- [x] `PosApiKeyGuard`: validasi `x-api-key` → hash → lookup aktif → update `lastUsedAt`
+- [x] `GET /pos/v1/profiles`: list server + profil (map field aman)
+- [x] `POST /pos/v1/trigger-voucher`: validasi → idempotensi → generate kode → `createHotspotUser` →
       simpan voucher+transaksi → loginUrl+QR → activity log
-- [ ] DTO + class-validator (pesan Bahasa Indonesia)
-- [ ] Daftarkan `PosModule` di `app.module.ts`
-- [ ] Env `POS_VOUCHER_CODE_LENGTH` (+ `.env.example`)
-- [ ] Uji cURL: 401 tanpa key, 201 sukses, 200 idempoten (transactionId sama), 502 router offline
-- [ ] (Frontend POS) — di luar scope backend ini
+- [x] DTO + class-validator (pesan Bahasa Indonesia)
+- [x] Daftarkan `PosModule` di `app.module.ts` + swagger `pos-api-key` di `main.ts`
+- [x] Env `POS_VOUCHER_CODE_LENGTH=6` (+ `.env.example`)
+- [x] Build `nest build` 0 error, `prisma generate` OK
+- [ ] **Uji runtime cURL** (401/201/200/502) — perlu backend di-restart dgn build baru (lihat catatan bawah)
+- [ ] (Frontend POS) — di luar scope iterasi ini (kelola key via Swagger/cURL)
+
+> **Catatan verifikasi:** kode telah diverifikasi statik konsisten dengan spec ini (auth/idempotensi/error/QR).
+> Uji runtime menunggu **restart backend** (proses lama belum memuat modul POS). Setelah `npm run start:dev`,
+> tag **POS** muncul di Swagger `/api/docs` dan endpoint `/api/pos-keys` + `/api/pos/v1/*` aktif.
 
 ---
 

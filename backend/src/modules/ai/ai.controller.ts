@@ -4,7 +4,15 @@
  * Mengekspos endpoint untuk menjalankan AI analysis dan mengambil laporan.
  * Dokumentasi Swagger di-generate otomatis dari dekorator @nestjs/swagger.
  */
-import { Controller, Get, Param, Post, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Post,
+  Delete,
+  Body,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiOperation,
   ApiParam,
@@ -66,5 +74,29 @@ export class AiController {
   @ApiResponse({ status: 404, description: 'Laporan tidak ditemukan' })
   async getReportById(@Param('id') id: string) {
     return this.aiService.getReportById(id);
+  }
+
+  /**
+   * DELETE /ai/reports
+   * Hapus SEMUA laporan AI (clear riwayat).
+   */
+  @Delete('reports')
+  @ApiOperation({ summary: 'Hapus semua laporan AI analysis' })
+  @ApiResponse({ status: 200, description: 'Semua laporan berhasil dihapus' })
+  async deleteAllReports() {
+    return this.aiService.deleteAllReports();
+  }
+
+  /**
+   * DELETE /ai/reports/:id
+   * Hapus satu laporan AI berdasarkan ID.
+   */
+  @Delete('reports/:id')
+  @ApiOperation({ summary: 'Hapus satu laporan AI analysis' })
+  @ApiParam({ name: 'id', description: 'ID laporan AI' })
+  @ApiResponse({ status: 200, description: 'Laporan berhasil dihapus' })
+  @ApiResponse({ status: 404, description: 'Laporan tidak ditemukan' })
+  async deleteReport(@Param('id') id: string) {
+    return this.aiService.deleteReport(id);
   }
 }

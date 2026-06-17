@@ -192,4 +192,35 @@ export class ServersService {
       error: result.error,
     };
   }
+
+  /**
+   * Refresh status koneksi SEMUA server sekaligus (untuk sinkronisasi terpusat).
+   * Tes koneksi tiap server (password didekripsi), perbarui lastStatus + lastCheckedAt
+   * di DB, lalu kembalikan daftar server terbaru (password di-strip).
+   * Dipakai polling terpusat di frontend agar status tidak stale.
+   */
+  async refreshAllStatus() {
+    const servers = await this.prisma.mikrotikServer.findMany();
+
+    // Tes koneksi semua server secara paralel
+    await Promise.all(
+      servers.map(async (server) => {
+        const result = await this.mikrotikService.testConnection(
+          server.host,
+          server.port,
+          server.username,
+          decryptSecret(server.password),
+          server.useSSL,
+        );
+        const lastStatus = result.success ? 'ONLINE' : 'OFFLINE';
+        await this.prisma.mikrotikServer.update({
+          where: { id: server.id },
+          data: { lastStatus, lastCheckedAt: new Date() },
+        });
+      }),
+    );
+
+    // Ambil ulang daftar terbaru (status sudah diperbarui)
+    return this.findAll();
+  }
 }

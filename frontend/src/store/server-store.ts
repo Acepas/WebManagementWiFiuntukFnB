@@ -17,11 +17,15 @@ interface ServerState {
   activeServerId: string | null;
   isSyncing: boolean;
   syncError: string | null;
+  // Counter yang naik tiap sync global sukses → dipakai halaman (profiles/vouchers)
+  // sebagai dependency useEffect agar otomatis reload data setelah sinkronisasi.
+  syncVersion: number;
   setServers: (servers: MikrotikServer[]) => void;
   setActiveServerId: (id: string) => void;
   getActiveServer: () => MikrotikServer | undefined;
   fetchServers: () => Promise<void>;
   checkActiveServerStatus: () => Promise<void>;
+  refreshStatuses: () => Promise<void>;
   syncActiveServer: (id: string) => Promise<SyncResult | null>;
 }
 
@@ -41,6 +45,7 @@ export const useServerStore = create<ServerState>((set, get) => {
     activeServerId: savedActiveServerId,
     isSyncing: false,
     syncError: null,
+    syncVersion: 0,
     setServers: (servers) => {
       set({ servers });
       
@@ -104,6 +109,17 @@ export const useServerStore = create<ServerState>((set, get) => {
         set({ servers: updatedServers });
       }
     },
+    // Sinkronisasi status TERPUSAT: refresh status koneksi SEMUA server sekaligus.
+    // Dipanggil polling terpusat di layout → seluruh halaman baca servers[] yang fresh.
+    refreshStatuses: async () => {
+      try {
+        const response = await apiClient.post('/servers/refresh-status');
+        // setServers menjaga activeServerId tetap valid
+        get().setServers(response.data);
+      } catch (error) {
+        console.error('Failed to refresh server statuses:', error);
+      }
+    },
     syncActiveServer: async (id: string): Promise<SyncResult | null> => {
       if (!id) return null;
       set({ isSyncing: true, syncError: null });
@@ -117,7 +133,12 @@ export const useServerStore = create<ServerState>((set, get) => {
             ? { ...server, lastStatus: 'ONLINE' }
             : server
         );
-        set({ servers: updatedServers, isSyncing: false, syncError: null });
+        set((s) => ({
+          servers: updatedServers,
+          isSyncing: false,
+          syncError: null,
+          syncVersion: s.syncVersion + 1, // picu reload halaman
+        }));
         return (response.data ?? null) as SyncResult | null;
       } catch (error: any) {
         console.error('Failed to sync active server:', error);

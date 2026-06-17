@@ -42,6 +42,11 @@ async function bootstrap() {
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
       'access-token',
     )
+    // API key untuk endpoint POS (header x-api-key) — dipakai mesin kasir
+    .addApiKey(
+      { type: 'apiKey', name: 'x-api-key', in: 'header' },
+      'pos-api-key',
+    )
     .addTag('Auth', 'Autentikasi admin')
     .addTag('Servers', 'Manajemen server MikroTik')
     .addTag('Profiles', 'Hotspot user profile')
