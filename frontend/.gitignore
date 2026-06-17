@@ -1,0 +1,4 @@
+
+# build artifact (breaks nixpacks cache-mount)
+tsconfig.tsbuildinfo
+*.tsbuildinfo
