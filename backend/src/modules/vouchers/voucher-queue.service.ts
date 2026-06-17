@@ -68,9 +68,10 @@ export class VoucherQueueService implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     const host = this.configService.get<string>('redis.host') ?? 'localhost';
     const port = this.configService.get<number>('redis.port') ?? 6379;
+    const redisPassword = this.configService.get<string>('redis.password');
 
     this.queue = new Queue('voucher-generation', {
-      connection: { host, port },
+      connection: { host, port, password: redisPassword },
     });
 
     this.worker = new Worker(
@@ -163,9 +164,20 @@ export class VoucherQueueService implements OnModuleInit, OnModuleDestroy {
         return { success: true, count: createdCount, batchId };
       },
       {
-        connection: { host, port },
+        connection: { host, port, password: redisPassword },
         concurrency: 1, // Proses antrean satu per satu agar tidak membanting router MikroTik
       },
+    );
+
+    // Error koneksi Redis TIDAK boleh meng-crash aplikasi: jalur POS (voucher
+    // sinkron) tidak memakai queue ini. Tanpa handler, 'error' dari ioredis
+    // yang tak tertangani akan menjatuhkan proses (exit 1). Log saja; fitur
+    // batch voucher butuh Redis sehat untuk berfungsi.
+    this.queue.on('error', (err) =>
+      console.error('[voucher-queue] queue error:', err?.message ?? err),
+    );
+    this.worker.on('error', (err) =>
+      console.error('[voucher-queue] worker error:', err?.message ?? err),
     );
   }
 
