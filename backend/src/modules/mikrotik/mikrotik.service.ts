@@ -265,6 +265,11 @@ export class MikrotikService {
     idleTimeout?: string,
     sharedUsers: number = 1,
   ) {
+    // DEMO MODE — lihat createHotspotUser. Lewati pembuatan profil di router.
+    if (process.env.POS_DEMO_MODE === 'true') {
+      console.warn(`[DEMO] createHotspotProfile di-skip (POS_DEMO_MODE): ${name}`);
+      return [];
+    }
     const creds = await this.getServerCredentials(serverId);
     const params = [
       `=name=${name}`,
@@ -312,6 +317,13 @@ export class MikrotikService {
     password: string,
     profile: string,
   ) {
+    // DEMO MODE — terbitkan voucher TANPA menyentuh MikroTik (uji integrasi POS
+    // tanpa router). Aktifkan via env POS_DEMO_MODE=true. JANGAN dipakai di
+    // produksi: tidak ada user hotspot yang benar-benar dibuat di router.
+    if (process.env.POS_DEMO_MODE === 'true') {
+      console.warn(`[DEMO] createHotspotUser di-skip (POS_DEMO_MODE): ${username}`);
+      return;
+    }
     const creds = await this.getServerCredentials(serverId);
     await this.apiRequest(
       creds.host, creds.port, creds.username, creds.password, creds.useSSL,
